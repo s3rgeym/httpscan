@@ -345,7 +345,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-FAIL = object()
+Fail = typing.NewType("Fail", None)
 
 
 @dataclasses.dataclass
@@ -439,7 +439,7 @@ class Scanner:
 
                 result = await self.do_probe(response, conf)
 
-                if result is FAIL:
+                if result is Fail:
                     continue
 
                 self.output_json(
@@ -469,7 +469,7 @@ class Scanner:
         self,
         response: aiohttp.ClientResponse,
         conf: ProbeConfig,
-    ) -> typing.Any:
+    ) -> dict[str, typing.Any] | Fail:
         rv = {}
 
         if "condition" in conf:
@@ -483,31 +483,31 @@ class Scanner:
             }
 
             if not execute(conf["condition"], vars_dict):
-                return FAIL
+                return Fail
 
         if "extract" in conf:
             text = await response.text()
             if match := re.search(conf["extract"], text):
                 rv |= {"extracted_item": match.group()}
             else:
-                return FAIL
+                return Fail
 
         if "extract_all" in conf:
             text = await response.text()
             if items := re.findall(conf["extract_all"], text):
                 rv |= {"extracted_items": items}
             else:
-                return FAIL
+                return Fail
 
         if "match" in conf:
             text = await response.text()
             if not re.search(conf["match"], text):
-                return FAIL
+                return Fail
 
         if "not_match" in conf:
             text = await response.text()
             if re.search(conf["not_match"], text):
-                return FAIL
+                return Fail
 
         if "save_to" in conf:
             save_path = (
