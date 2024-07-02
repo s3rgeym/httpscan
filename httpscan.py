@@ -387,7 +387,7 @@ class Scanner:
 
             try:
                 timeout = aiohttp.ClientTimeout(
-                    connect=self.timeout, sock_read=self.timeout
+                    total=None, sock_connect=self.timeout, sock_read=self.timeout
                 )
 
                 response = await session.request(
@@ -534,16 +534,7 @@ def main(argv: typing.Sequence | None = None) -> None:
     log.setLevel(lvl)
     log.addHandler(ColorHandler())
 
-    config_file = args.config
-
-    # ищем конфиг в текущей директории либо в ~/.config
-    if not config_file:
-        config_name = pathlib.Path(__name__).stem
-        for config_directory in [pathlib.Path.cwd(), pathlib.Path.home() / ".config"]:
-            for ext in ("yml", "yaml"):
-                if (path := config_directory / config_name + ext).exists():
-                    config_file = path.open()
-                    break
+    config_file = args.config or find_config()
 
     log.debug(f"{config_file.name =}")
 
@@ -572,6 +563,14 @@ def main(argv: typing.Sequence | None = None) -> None:
         asyncio.run(scanner.scan(urls))
 
     log.info("finished!")
+
+
+def find_config() -> None | typing.TextIO:
+    config_name = pathlib.Path(__name__).stem
+    for config_directory in [pathlib.Path.cwd(), pathlib.Path.home() / ".config"]:
+        for ext in ("yml", "yaml"):
+            if (path := config_directory / config_name + ext).exists():
+                return path.open()
 
 
 if __name__ == "__main__":
