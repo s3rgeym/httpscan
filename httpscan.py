@@ -470,14 +470,14 @@ class Scanner:
         if "extract" in conf:
             text = await response.text()
             if match := re.search(conf["extract"], text):
-                rv |= {"extracted": match.group()}
+                rv |= {"extracted_item": match.group()}
             else:
                 return FAIL
 
         if "extract_all" in conf:
             text = await response.text()
-            if found := re.findall(conf["extract_all"], text):
-                rv |= {"extracted": found}
+            if items := re.findall(conf["extract_all"], text):
+                rv |= {"extracted_items": items}
             else:
                 return FAIL
 
