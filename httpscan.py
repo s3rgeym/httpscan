@@ -344,8 +344,6 @@ class Scanner:
     )
 
     async def scan(self, urls: typing.Sequence[str]) -> None:
-        log.info("scanning started")
-
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
@@ -366,8 +364,6 @@ class Scanner:
                 tg.create_task(self.worker(session))
 
             tg.create_task(self.stop_workers())
-
-        log.info("scanning finished!")
 
     async def produce(self, urls: typing.Sequence[str]) -> None:
         for url in urls:
@@ -580,7 +576,7 @@ def normalize_url(u: str) -> str:
     return u if "://" in u else f"https://{u}"
 
 
-def main(argv: typing.Sequence | None = None) -> None:
+def main(argv: typing.Sequence | None = None) -> None | int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
@@ -616,8 +612,16 @@ def main(argv: typing.Sequence | None = None) -> None:
         proxy_url=conf.get("proxy_url", args.proxy_url),
     )
 
-    with contextlib.suppress(KeyboardInterrupt):
+    try:
         asyncio.run(scanner.scan(urls))
+    except KeyboardInterrupt:
+        log.warning("execution interrupted by user")
+        return 1
+    except Exception as ex:
+        log.critical(ex)
+        return 1
+    else:
+        log.info("finished!")
 
 
 def find_config() -> None | typing.TextIO:
