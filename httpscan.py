@@ -93,7 +93,25 @@ def expand(s: str) -> set[str]:
 
 
 TOKENS_RE = re.compile(
-    r"""(?P<NULL>(?:null|nil))|(?P<BOOLEAN>(?:true|false))|(?P<ID>[a-z_][a-z0-9_]*)|(?P<NUMBER>\d+(\.\d+)?)|(?P<STRING>(?:"[^"]*"|'[^']*'))|(?P<COMPARE>(?:[=!]=|[<>]=?))|(?P<NOT>(?:not|!))|(?P<AND>(?:and|&&))|(?P<OR>(?:or|\|\|))|(?P<LPAREN>\()|(?P<RPAREN>\))|(?P<SPACE>\s+)|(?P<INVALID_CHAR>.)|(?P<END>$)""",
+    "|".join(
+        f"(?P<{k}>{v})"
+        for k, v in {
+            "NULL": r"(?:null|nil)",
+            "BOOLEAN": r"(?:true|false)",
+            "ID": r"[a-z_][a-z0-9_]*",
+            "NUMBER": r"\d+(\.\d+)?",
+            "STRING": r'(?:"[^"]*"|\'[^\']*\')',
+            "COMPARE": r"(?:[=!]=|[<>]=?)",
+            "NOT": r"(?:not|!)",
+            "AND": r"(?:and|&&)",
+            "OR": r"(?:or|\|\|)",
+            "LPAREN": r"\(",
+            "RPAREN": r"\)",
+            "SPACE": r"\s+",
+            "INVALID_CHAR": r".",
+            "END": r"$",
+        }.items()
+    ),
     re.IGNORECASE,
 )
 
