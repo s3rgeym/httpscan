@@ -593,7 +593,7 @@ def main(argv: typing.Sequence | None = None) -> None:
         workers_num=conf.get("workers", args.workers_num),
         timeout=conf.get("timeout", args.timeout),
         max_host_error=conf.get("max_host_error", args.max_host_error),
-        proxy_url=conf.get("prixy_url", args.proxy_url),
+        proxy_url=conf.get("proxy_url", args.proxy_url),
     )
 
     with contextlib.suppress(KeyboardInterrupt):
