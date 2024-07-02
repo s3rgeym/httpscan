@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import copy
 import dataclasses
+import datetime
 import functools
 import itertools
 import json
@@ -60,9 +61,18 @@ class ColorHandler(logging.StreamHandler):
 # stderr = functools.partial(print, file=sys.stderr, flush=True)
 
 
+# Модифицированная версия отсюда https://algo.monster/liteproblems/1096
+def parse_range(s: str) -> list[str | int]:
+    range_parts = s.split("..", 1)
+    is_num_range = all(x.isdigit() for x in range_parts)
+    first, last = map((ord, int)[is_num_range], range_parts)
+    # first, last = min(first, last), max(first, last)
+    res = range(first, last + 1)
+    return list(res if is_num_range else map(chr, res))
+
+
 @functools.lru_cache
 def expand(s: str) -> set[str]:
-    # Модифицированная версия отсюда https://algo.monster/liteproblems/1096
     rv = set()
 
     def dfs(exp: str) -> None:
@@ -74,8 +84,8 @@ def expand(s: str) -> set[str]:
 
         before, inner = inner.rsplit("{", 1)
 
-        for item in inner.split(","):
-            dfs(before + item + after)
+        for item in parse_range(inner) if ".." in inner else inner.split(","):
+            dfs(f"{before}{item}{after}")
 
     dfs(s)
 
@@ -227,6 +237,7 @@ class ProbeConfig(typing.TypedDict):
     match: typing.NotRequired[str]
     not_match: typing.NotRequired[str]
     extract: typing.NotRequired[str]
+    extract_all: typing.NotRequired[str]
     # status_code >= 200 && status_code < 300
     condition: typing.NotRequired[str]
     save_to: typing.NotRequired[os.PathLike]
@@ -418,20 +429,17 @@ class Scanner:
                     continue
 
                 self.output_json(
-                    {
-                        k: v
-                        for k, v in {
+                    remove_empty_from_dict(
+                        {
                             "url": url,
                             "status_code": response.status,
-                            "content_type": response.headers.get("Content-Type"),
-                            "content_length": int(
-                                response.headers.get("Content-Length", 0)
-                            ),
+                            "content_type": response.content_type,
+                            "content_length": response.content_length,
                             "description": conf["name"],
                             "result": result,
-                        }.items()
-                        if v
-                    },
+                            "local_time": str(datetime.datetime.now()),
+                        }
+                    ),
                     sort_keys=True,
                 )
             except Exception as ex:
@@ -467,6 +475,13 @@ class Scanner:
             text = await response.text()
             if match := re.search(conf["extract"], text):
                 rv |= {"extracted": match.group()}
+            else:
+                return FAIL
+
+        if "extract_all" in conf:
+            text = await response.text()
+            if found := re.findall(conf["extract_all"], text):
+                rv |= {"extracted": found}
             else:
                 return FAIL
 
@@ -553,7 +568,12 @@ class Scanner:
         ) as session:
             if user_agent:
                 session.headers.update({"User-Agent": user_agent})
+
             yield session
+
+
+def remove_empty_from_dict(d: dict) -> dict:
+    return {k: v for k, v in d.items() if v}
 
 
 def normalize_url(u: str) -> str:
