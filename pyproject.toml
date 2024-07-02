@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "httpscan"
+authors = [{name = "Sergey M"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+
+classifiers = [
+  "Topic :: Internet"
+]
+
+requires-python = ">=3.11.0"
+
+dependencies = [
+  "pyyaml",
+  "aiohttp[speedups]",
+  "aiohttp_socks"
+]
+
+dynamic = ["version"]
+
+[project.optional-dependencies]
+
+[project.urls]
+Repository = "https://github.com/s3rgeym/httpscan.git"
+
+[tool.setuptools.dynamic]
+version = {attr = "httpscan.__version__"}
+
+[project.scripts]
+httpscan = 'httpscan:main'
