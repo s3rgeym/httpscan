@@ -331,6 +331,11 @@ class Scanner:
     )
 
     async def scan(self, urls: typing.Sequence[str]) -> None:
+        log.info("scanning started")
+
+        ip = await self.get_public_ip()
+        log.debug(f"your public ip address: {ip}")
+
         self.queue = asyncio.Queue(maxsize=self.workers_num)
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
@@ -344,6 +349,8 @@ class Scanner:
                 tg.create_task(self.worker(session))
 
             tg.create_task(self.stop_workers())
+
+        log.info("scanning finished!")
 
     async def produce(self, urls: typing.Sequence[str]) -> None:
         for url in urls:
@@ -519,6 +526,11 @@ class Scanner:
             self._user_agents = await self.fetch_user_agents()
         return random.choice(self._user_agents)
 
+    async def get_public_ip(self) -> str:
+        async with self.get_session() as session:
+            response = await session.get("https://api.ipify.org?format=json")
+            return (await response.json())["ip"]
+
     @contextlib.asynccontextmanager
     async def get_session(self) -> typing.AsyncIterator[aiohttp.ClientSession]:
         connector = None
@@ -573,8 +585,6 @@ def main(argv: typing.Sequence | None = None) -> None:
 
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(scanner.scan(urls))
-
-    log.info("finished!")
 
 
 def find_config() -> None | typing.TextIO:
