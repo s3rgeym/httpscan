@@ -19,7 +19,7 @@ httpscan -h
 httpscan -i URLs.txt -c /path/to/config.yml > results.json
 ```
 
-Если путь до конфига не задан, то в текущей рабочей директории ищутся файлы с именами `httpscan.yml` или `httpscan.yaml`.
+Если путь до конфига не задан, то в текущей рабочей директории либо в `~/.config` ищутся файлы с именами `httpscan.yml` или `httpscan.yaml`.
 
 В конфиге есть поле `probes`. Оно содержит список объектов `ProbeConfig`.
 
