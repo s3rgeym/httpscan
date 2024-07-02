@@ -337,6 +337,8 @@ class Scanner:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
+        self.user_agents = await self.fetch_user_agents()
+
         self.queue = asyncio.Queue(maxsize=self.workers_num)
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
@@ -389,11 +391,8 @@ class Scanner:
 
                 headers = conf.get("headers", {})
 
-                user_agent = await self.rand_user_agent()
-                assert user_agent, "can't get user_agent"
-
                 headers |= {
-                    "User-Agent": user_agent,
+                    "User-Agent": random.choice(self.user_agents),
                     "Referer": "https://www.google.com/",
                 }
 
@@ -410,10 +409,7 @@ class Scanner:
                     allow_redirects=False,
                 )
 
-                log.debug(
-                    # f"{response.status} - {response.method} - {response.url} - {user_agent!r}"
-                    f"{response.status} - {response.method} - {response.url}"
-                )
+                log.debug(f"{response.status} - {response.method} - {response.url}")
 
                 result = await self.do_probe(response, conf)
 
@@ -516,13 +512,6 @@ class Scanner:
             )
             assert data, "can't fetch user agents"
             return [item["ua"] for item in itertools.chain(*map(json.loads, data))]
-
-    # @functools.lru_cache
-    # TypeError: unhashable type: 'Scanner'
-    async def rand_user_agent(self) -> str:
-        if not hasattr(self, "_user_agents"):
-            self._user_agents = await self.fetch_user_agents()
-        return random.choice(self._user_agents)
 
     async def check_proxy(self) -> bool:
         real_ip = await self.get_public_ip()
