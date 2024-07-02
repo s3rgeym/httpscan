@@ -305,7 +305,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--proxy-url",
         "--proxy",
-        help="proxy url, eg `socks5://127.0.0.1:1080`",
+        help="proxy url, eg `socks5://127.0.0.1:9050`",
     )
     parser.add_argument(
         "-v", "--verbosity", help="be more verbosity", action="count", default=0
@@ -533,14 +533,14 @@ def main(argv: typing.Sequence | None = None) -> None:
 
     config_file = args.config
 
-    # ищем конфиг в текущей директории
+    # ищем конфиг в текущей директории либо в ~/.config
     if not config_file:
-        for ext in ("yml", "yaml"):
-            if (
-                path := pathlib.Path.cwd() / pathlib.Path(__name__).stem + ext
-            ).exists():
-                config_file = path.open()
-                break
+        config_name = pathlib.Path(__name__).stem
+        for config_directory in [pathlib.Path.cwd(), pathlib.Path.home() / ".config"]:
+            for ext in ("yml", "yaml"):
+                if (path := config_directory / config_name + ext).exists():
+                    config_file = path.open()
+                    break
 
     log.debug(f"{config_file.name =}")
 
