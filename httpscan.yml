@@ -19,7 +19,7 @@ probes:
   save_to: ./download/database
 - condition: status_code == 200 && mime_type != 'text/html'
   name: docker config file
-  path: /{{.env,Dockerfile}{,.prod,.dev},docker-compose{,.prod,.dev}.yml}
+  path: /{{prod,dev,}.env,Dockerfile{,.prod,.dev},docker-compose{,.prod,.dev}.yml}
   save_to: ./download/docker
 - condition: status_code == 200 && mime_type != 'text/html'
   match: ^<\?php

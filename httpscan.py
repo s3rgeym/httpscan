@@ -405,7 +405,10 @@ class Scanner:
                     allow_redirects=False,
                 )
 
-                log.debug(f"{response.status} - {response.method} - {response.url}")
+                log.debug(
+                    # f"{response.status} - {response.method} - {response.url} - {user_agent!r}"
+                    f"{response.status} - {response.method} - {response.url}"
+                )
 
                 result = await self.do_probe(response, conf)
 
