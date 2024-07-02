@@ -473,7 +473,10 @@ class Scanner:
             save_path = (
                 pathlib.Path(conf["save_to"])
                 / response.host
-                / (response.url.path[1:] or "index.html")
+                / (
+                    response.url.path[1:]
+                    + ("", "index.html")[response.url.path.endswith("/")]
+                )
             )
             save_path.parent.mkdir(parents=True, exist_ok=True)
             with save_path.open("wb") as f:
