@@ -24,4 +24,4 @@ probes:
   match: ^<\?php
   name: php config backup
   path: /wp-config.php{.bak,{0,1},~}
-  save_to: ./download/php_configs
+  save_to: ./download/php-configs
