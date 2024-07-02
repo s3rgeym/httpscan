@@ -81,7 +81,7 @@ def expand(s: str) -> set[str]:
 
 
 TOKENS_RE = re.compile(
-    r"""(?P<NULL>null)|(?P<BOOLEAN>(?:true|false))|(?P<ID>[a-z_][a-z0-9_]*)|(?P<NUMBER>\d+(\.\d+)?)|(?P<STRING>(?:"[^"]*"|'[^']*'))|(?P<COMPARE>(?:[=!]=|[<>]=?))|(?P<NOT>(?:not|!))|(?P<AND>(?:and|&&))|(?P<OR>(?:or|\|\|))|(?P<LPAREN>\()|(?P<RPAREN>\))|(?P<SPACE>\s+)|(?P<INVALID_CHAR>.)|(?P<END>$)""",
+    r"""(?P<NULL>(?:null|nil))|(?P<BOOLEAN>(?:true|false))|(?P<ID>[a-z_][a-z0-9_]*)|(?P<NUMBER>\d+(\.\d+)?)|(?P<STRING>(?:"[^"]*"|'[^']*'))|(?P<COMPARE>(?:[=!]=|[<>]=?))|(?P<NOT>(?:not|!))|(?P<AND>(?:and|&&))|(?P<OR>(?:or|\|\|))|(?P<LPAREN>\()|(?P<RPAREN>\))|(?P<SPACE>\s+)|(?P<INVALID_CHAR>.)|(?P<END>$)""",
     re.IGNORECASE,
 )
 
@@ -139,14 +139,15 @@ class ExpressionExecutor:
         rv = self.and_()
         while self.match("OR"):
             # выражение справа от or не выполнится, если левое ИСТИНА!!!
-            tmp = self.and_()
-            rv = rv or tmp
+            rhv = self.and_()
+            rv = rv or rhv
         return rv
 
     def and_(self) -> typing.Any:
         rv = self.compare()
         while self.match("AND"):
-            rv = rv and self.compare()
+            rhv = self.compare()
+            rv = rv and rhv
         return rv
 
     def compare(self) -> typing.Any:
@@ -325,7 +326,9 @@ class Scanner:
     timeout: float = 10.0
     max_host_error: int = 10
     proxy_url: str | None = None
-    host_error_counter: Counter[str] = dataclasses.field(init=False, repr=False)
+    host_error_counter: Counter[str] = dataclasses.field(
+        init=False, repr=False, default_factory=Counter
+    )
 
     async def scan(self, urls: typing.Sequence[str]) -> None:
         self.queue = asyncio.Queue(maxsize=self.workers_num)
@@ -428,7 +431,10 @@ class Scanner:
                 )
             except Exception as ex:
                 self.host_error_counter[hostname] += 1
-                log.error(ex)
+                if DEBUGGER_ON:
+                    log.exception(ex)
+                else:
+                    log.error(ex)
             finally:
                 self.queue.task_done()
 
@@ -487,7 +493,7 @@ class Scanner:
 
         return rv
 
-    def output_json(self, obj: typing.Any, **kw: type.Any) -> None:
+    def output_json(self, obj: typing.Any, **kw: typing.Any) -> None:
         js = json.dumps(obj, ensure_ascii=False, **kw)
         print(js, file=self.output, flush=True)
 
@@ -534,11 +540,14 @@ def main(argv: typing.Sequence | None = None) -> None:
     log.setLevel(lvl)
     log.addHandler(ColorHandler())
 
-    config_file = args.config or find_config()
+    conf: Config
 
-    log.debug(f"{config_file.name =}")
-
-    conf: Config = yaml.safe_load(config_file) if config_file else {}
+    if config_file := args.config or find_config():
+        conf = yaml.safe_load(config_file)
+        log.debug(f"config loaded: {config_file.name}")
+    else:
+        log.warning("config not found")
+        conf = {}
 
     urls = list(args.urls)
     # log.debug(f"{urls=}")
@@ -566,20 +575,13 @@ def main(argv: typing.Sequence | None = None) -> None:
 
 
 def find_config() -> None | typing.TextIO:
-    config_name = pathlib.Path(__name__).stem
+    config_name = pathlib.Path(__file__).stem
     for config_directory in [pathlib.Path.cwd(), pathlib.Path.home() / ".config"]:
         for ext in ("yml", "yaml"):
-            if (path := config_directory / config_name + ext).exists():
+            path = config_directory / f"{config_name}.{ext}"
+            if path.exists():
                 return path.open()
 
 
 if __name__ == "__main__":
-    sys.exit(
-        # php -S 127.0.0.1:8000
-        main(
-            (
-                None,
-                ["-u", "http://127.0.0.1:8000", "-vv"],
-            )[DEBUGGER_ON]
-        )
-    )
+    sys.exit(main())
