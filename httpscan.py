@@ -19,6 +19,7 @@ from collections import Counter
 from email.message import Message as EmailMessage
 
 import aiohttp
+import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
@@ -333,16 +334,18 @@ class Scanner:
     async def scan(self, urls: typing.Sequence[str]) -> None:
         log.info("scanning started")
 
-        ip = await self.get_public_ip()
-        log.debug(f"your public ip address: {ip}")
+        if self.proxy_url and not (await self.check_proxy()):
+            raise ValueError("ip leak detected!")
 
         self.queue = asyncio.Queue(maxsize=self.workers_num)
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
-        async with self.get_session() as session, asyncio.TaskGroup() as tg:
-            # Игнориуем куки, так при сканирование десятков тысяч адресов...
-            session._cookie_jar = aiohttp.DummyCookieJar()
-
+        async with self.get_session(
+            proxy_url=self.proxy_url,
+            timeout=self.timeout,
+            # Игнориуем куки чтобы сканер не зависал после посещения N сайтов
+            cookie_jar=aiohttp.DummyCookieJar(),
+        ) as session, asyncio.TaskGroup() as tg:
             tg.create_task(self.produce(urls))
 
             for _ in range(self.workers_num):
@@ -377,38 +380,33 @@ class Scanner:
             if url is None:
                 break
 
-            hostname = urllib.parse.urlsplit(url).netloc
-
-            if self.host_error_counter[hostname] > self.max_host_error:
-                log.warning(f"maximum host error exceeded: {hostname}")
-                continue
-
-            headers = conf.get("headers", {})
-
-            user_agent = await self.rand_user_agent()
-            assert user_agent, "can't get user_agent"
-
-            headers |= {
-                "User-Agent": user_agent,
-                "Referer": "https://www.google.com/",
-            }
-
-            meth = conf.get("method", "GET").upper()
-
             try:
-                timeout = aiohttp.ClientTimeout(
-                    total=None, sock_connect=self.timeout, sock_read=self.timeout
-                )
+                hostname = urllib.parse.urlsplit(url).netloc
+
+                if self.host_error_counter[hostname] > self.max_host_error:
+                    log.warning(f"maximum host error exceeded: {hostname}")
+                    continue
+
+                headers = conf.get("headers", {})
+
+                user_agent = await self.rand_user_agent()
+                assert user_agent, "can't get user_agent"
+
+                headers |= {
+                    "User-Agent": user_agent,
+                    "Referer": "https://www.google.com/",
+                }
+
+                method = conf.get("method", "GET").upper()
 
                 response = await session.request(
-                    meth,
+                    method,
                     url,
                     headers=headers,
                     params=conf.get("params"),
                     data=conf.get("data"),
                     json=conf.get("json"),
                     cookies=conf.get("cookies"),
-                    timeout=timeout,
                     allow_redirects=False,
                 )
 
@@ -526,20 +524,45 @@ class Scanner:
             self._user_agents = await self.fetch_user_agents()
         return random.choice(self._user_agents)
 
-    async def get_public_ip(self) -> str:
-        async with self.get_session() as session:
+    async def check_proxy(self) -> bool:
+        real_ip = await self.get_public_ip()
+        proxy_ip = await self.get_public_ip(proxy_url=self.proxy_url)
+        return real_ip != proxy_ip
+
+    async def get_public_ip(self, **kw: typing.Any) -> str:
+        async with self.get_session(**kw) as session:
             response = await session.get("https://api.ipify.org?format=json")
             return (await response.json())["ip"]
 
     @contextlib.asynccontextmanager
-    async def get_session(self) -> typing.AsyncIterator[aiohttp.ClientSession]:
+    async def get_session(
+        self,
+        *,
+        timeout: float | aiohttp.ClientTimeout | None = None,
+        user_agent: str | None = None,
+        proxy_url: str | None = None,
+        cookie_jar: aiohttp.abc.AbstractCookieJar | None = None,
+    ) -> typing.AsyncIterator[aiohttp.ClientSession]:
+        if isinstance(timeout, (int, float)):
+            timeout = aiohttp.ClientTimeout(
+                total=None,
+                sock_connect=timeout,
+                sock_read=timeout,
+            )
+
         connector = None
 
-        if self.proxy_url:
+        if proxy_url:
             log.debug(f"using proxy {self.proxy_url!r} for all connections")
             connector = ProxyConnector.from_url(self.proxy_url)
 
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            cookie_jar=cookie_jar,
+        ) as session:
+            if user_agent:
+                session.headers.update({"User-Agent": user_agent})
             yield session
 
 
