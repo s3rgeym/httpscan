@@ -25,7 +25,7 @@ httpscan -i URLs.txt -c /path/to/config.yml > results.json
 
 > Поля которые содержит конфиг: см. `Config`.
 
-В репозитории имеется [sample.httpscan.yml](./sample.httpscan.yml) для примера (можно его переместить в `~/.config/httpscan.yml`).
+В репозитории имеется [httpscan.yml.sample](./httpscan.yml.sample) для примера (можно его переместить в `~/.config/httpscan.yml`).
 
 * Каждый элемент массива `probes` содержит обязательное поле `name` с именем пробы.
 * `path` — это путь для подстановки к каждому URL. Путь поддерживает brace expansion как в BASH, например, `/{foo,ba{r,z}}.biz` (будут проверены пути `/foo.biz`, `/bar.biz` и `/baz.biz`).
