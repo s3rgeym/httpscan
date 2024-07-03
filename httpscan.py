@@ -545,7 +545,9 @@ class Scanner:
 
     async def check_proxy(self) -> bool:
         real_ip = await self.get_public_ip()
+        log.debug(f"real ip: {mask_ip(real_ip)}")
         proxy_ip = await self.get_public_ip(proxy_url=self.proxy_url)
+        log.debug(f"proxy ip: {mask_ip(real_ip)}")
         return real_ip != proxy_ip
 
     async def get_public_ip(self, **kw: typing.Any) -> str:
@@ -584,6 +586,11 @@ class Scanner:
                 session.headers.update({"User-Agent": user_agent})
 
             yield session
+
+
+def mask_ip(addr: str, ch: str = "*") -> str:
+    """маскирует все сегменты адреса за исключением последнего"""
+    return re.sub(r"[^.](?![^.]*$)", ch, addr)
 
 
 def remove_empty_from_dict(d: dict) -> dict:

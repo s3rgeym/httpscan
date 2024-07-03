@@ -18,29 +18,5 @@ probes:
 # часто бекапы сайта валяются прямо в корне
 - condition: status_code == 200 && mime_type != 'text/html'
   name: site backup
-  path: /{site,www,backup}.{zip,tar.{g,x}z,tgz}
-  save_to: ./download
-- condition: status_code == 200 && mime_type == 'application/sql'
-  # может быть огромным, что приведет к падению
-  # match: INSERT INTO
-  name: database dump
-  path: /{db,dump,database,backup}.sql
-  save_to: ./download
-- condition: status_code == 200 && mime_type != 'text/html'
-  name: docker config file
-  path: /{{prod,dev,}.env,Dockerfile{,.prod,.dev},docker-compose{,.prod,.dev}.yml}
-  save_to: ./download
-- condition: status_code == 200 && mime_type != 'text/html'
-  match: ^<\?php
-  name: php config backup
-  path: /wp-config.php{.bak,{0..2},~}
-  save_to: ./download
-- condition: /.ssh/{authorized_keys,known_hosts,id_rsa}
-  name: ssh
-  save_to: ./download
-- condition: /.{bash,zsh,python,node_repl}_history
-  name: history file
-  save_to: ./download
-- condition: /{.gitlab-ci.yml,.travis.yml,bitbucket-pipelines.yml,Jenkinsfile}
-  name: cicd
+  path: /{site,www,backup}.{zip,tar.{g,x}z}
   save_to: ./download
