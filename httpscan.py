@@ -261,16 +261,6 @@ class ProbeConfig(typing.TypedDict):
     save_to: typing.NotRequired[os.PathLike]
 
 
-DEFAULT_PROBES: list[ProbeConfig] = [
-    {
-        "name": "server directory listing",
-        "path": "/{wp-content,{backup,dump}{,s}}",
-        "match": "<title>Index of /",
-        "condition": "status_code == 200 && mime_type == 'text/html'",
-    },
-]
-
-
 class Config(typing.TypedDict):
     workers: typing.NotRequired[int]
     timeout: typing.NotRequired[int | float]
@@ -458,10 +448,7 @@ class Scanner:
                 )
             except Exception as ex:
                 self.host_error_counter[hostname] += 1
-                if DEBUGGER_ON:
-                    log.exception(ex)
-                else:
-                    log.error(ex)
+                log.error(ex)
             finally:
                 self.queue.task_done()
 
@@ -615,8 +602,14 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         conf = yaml.safe_load(config_file)
         log.debug(f"config loaded: {config_file.name}")
     else:
-        log.warning("config not found")
-        conf = {}
+        log.error("config not found")
+        return 1
+
+    probes = conf["probes"]
+
+    if not all("path" in item for item in probes):
+        log.error("invalid config: each `probes` element must have a `path`")
+        return 1
 
     urls = list(args.urls)
     # log.debug(f"{urls=}")
@@ -625,8 +618,6 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         urls = itertools.chain(urls, filter(None, map(str.strip, args.input)))
 
     urls = map(normalize_url, urls)
-
-    probes: list[ProbeConfig] = conf.get("probes", DEFAULT_PROBES)
 
     scanner = Scanner(
         probes=probes,
