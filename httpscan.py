@@ -401,7 +401,7 @@ class Scanner:
             try:
                 hostname = urllib.parse.urlsplit(url).netloc
 
-                if self.host_error_counter[hostname] > self.max_host_error:
+                if self.host_error_counter[hostname] >= self.max_host_error:
                     log.warning(f"maximum host error exceeded: {hostname}")
                     continue
 
@@ -534,7 +534,7 @@ class Scanner:
         real_ip = await self.get_public_ip()
         log.debug(f"real ip: {mask_ip(real_ip)}")
         proxy_ip = await self.get_public_ip(proxy_url=self.proxy_url)
-        log.debug(f"proxy ip: {mask_ip(real_ip)}")
+        log.debug(f"proxy ip: {mask_ip(proxy_ip)}")
         return real_ip != proxy_ip
 
     async def get_public_ip(self, **kw: typing.Any) -> str:
@@ -596,6 +596,8 @@ def main(argv: typing.Sequence | None = None) -> None | int:
     log.setLevel(lvl)
     log.addHandler(ColorHandler())
 
+    log.debug("debugger: %s", ["off", "on"][DEBUGGER_ON])
+
     conf: Config
 
     if config_file := args.config or find_config():
@@ -606,13 +608,11 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         return 1
 
     probes = conf["probes"]
-    required_keys = ["path", "name"]
-
     # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
     # True
-    if not all(set(item) > set(required_keys) for item in probes):
+    if not all(set(item) > ProbeConfig.__required_keys__ for item in probes):
         log.error(
-            f"invalid config: each probes element must have keys: {', '.join(required_keys[:-1])} and {required_keys[-1]}"
+            f"invalid config: each probes element must have keys: {', '.join(ProbeConfig.__required_keys__)}"
         )
         return 1
 
