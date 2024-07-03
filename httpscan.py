@@ -606,9 +606,14 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         return 1
 
     probes = conf["probes"]
+    required_keys = ["path", "name"]
 
-    if not all("path" in item for item in probes):
-        log.error("invalid config: each `probes` element must have a `path`")
+    # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
+    # True
+    if not all(set(item) > set(required_keys) for item in probes):
+        log.error(
+            f"invalid config: each probes element must have keys: {', '.join(required_keys[:-1])} and {required_keys[-1]}"
+        )
         return 1
 
     urls = list(args.urls)
@@ -632,9 +637,6 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         asyncio.run(scanner.scan(urls))
     except KeyboardInterrupt:
         log.warning("execution interrupted by user")
-        return 1
-    except Exception as ex:
-        log.critical(ex)
         return 1
     else:
         log.info("finished!")
