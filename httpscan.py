@@ -5,7 +5,6 @@ import contextlib
 import copy
 import dataclasses
 import datetime
-import functools
 import itertools
 import json
 import logging
@@ -71,7 +70,6 @@ def parse_range(s: str) -> list[str | int]:
     return list(res if is_num_range else map(chr, res))
 
 
-@functools.lru_cache
 def expand(s: str) -> set[str]:
     rv = set()
 
@@ -351,7 +349,7 @@ class Scanner:
         init=False, repr=False, default_factory=Counter
     )
 
-    async def scan(self, urls: typing.Sequence[str]) -> None:
+    async def scan(self, urls: list[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
@@ -373,12 +371,16 @@ class Scanner:
 
             tg.create_task(self.stop_workers())
 
-    async def produce(self, urls: typing.Sequence[str]) -> None:
-        for url in urls:
-            for probe_conf in self.probes:
-                for path in expand(probe_conf["path"]):
-                    target_url = urllib.parse.urljoin(url, path)
-                    await self.queue.put((target_url, probe_conf))
+    async def produce(self, urls: list[str]) -> None:
+        for probe_conf in self.probes:
+            for path in expand(probe_conf["path"]):
+                for url in urls:
+                    await self.queue.put(
+                        (
+                            urllib.parse.urljoin(url, path),
+                            probe_conf,
+                        )
+                    )
 
     async def stop_workers(self) -> None:
         await self.queue.join()
@@ -622,7 +624,7 @@ def main(argv: typing.Sequence | None = None) -> None | int:
     if not (args.input.isatty() and urls):
         urls = itertools.chain(urls, filter(None, map(str.strip, args.input)))
 
-    urls = map(normalize_url, urls)
+    urls = list(map(normalize_url, urls))
 
     scanner = Scanner(
         probes=probes,
