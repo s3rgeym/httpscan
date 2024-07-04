@@ -563,7 +563,7 @@ class Scanner:
         connector = None
 
         if proxy_url:
-            log.debug(f"using proxy {self.proxy_url!r} for all connections")
+            log.debug(f"using proxy {self.proxy_url!r}")
             connector = ProxyConnector.from_url(self.proxy_url)
 
         async with aiohttp.ClientSession(
