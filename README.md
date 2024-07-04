@@ -44,3 +44,13 @@ httpscan -i URLs.txt -c /path/to/config.yml > results.json
 
 * При каждом запросе используется рандомный заголовок `User-Agent`.
 * Поддерживаются прокси, например, `socks5://127.0.0.1:9050`.
+
+Для разработки:
+
+```bash
+git clone ... && cd ...
+python -m venv .venv
+. .venv/bin/activate
+# установит все зависимости из pyproject.toml
+pip install .
+```
