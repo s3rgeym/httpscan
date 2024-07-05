@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import collections
 import contextlib
 import copy
 import dataclasses
@@ -13,9 +14,9 @@ import pathlib
 import random
 import re
 import sys
+import time
 import typing
 import urllib.parse
-from collections import Counter
 from email.message import Message as EmailMessage
 
 import aiohttp
@@ -313,7 +314,14 @@ def create_parser() -> argparse.ArgumentParser:
         "--timeout",
         help="request timeout",
         type=float,
-        default=10.0,
+        default=10,
+    )
+    parser.add_argument(
+        "-d",
+        "--delay",
+        help="delay before each request in seconds",
+        type=float,
+        default=0,
     )
     parser.add_argument(
         "-maxhe",
@@ -343,19 +351,25 @@ class Scanner:
     output: typing.TextIO = sys.stdout
     workers_num: int = 10
     timeout: float = 10.0
+    delay: float = 0.150
     max_host_error: int = 10
     proxy_url: str | None = None
-    host_error_counter: Counter[str] = dataclasses.field(
-        init=False, repr=False, default_factory=Counter
+    next_request: float = 0.0
+    lock: asyncio.Lock = dataclasses.field(
+        init=False,
+        repr=False,
+        default_factory=asyncio.Lock,
     )
 
     async def scan(self, urls: list[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
-        self.user_agents = await self.fetch_user_agents()
+        user_agents = await self.fetch_user_agents()
 
-        self.queue = asyncio.Queue(maxsize=self.workers_num)
+        queue = asyncio.Queue(maxsize=self.workers_num)
+
+        error_counter: collections.Counter[str] = collections.Counter()
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
         async with self.get_session(
@@ -364,38 +378,41 @@ class Scanner:
             # Игнориуем куки чтобы сканер не зависал после посещения N сайтов
             cookie_jar=aiohttp.DummyCookieJar(),
         ) as session, asyncio.TaskGroup() as tg:
-            tg.create_task(self.produce(urls))
+            tg.create_task(self.produce(urls, queue))
 
             for _ in range(self.workers_num):
-                tg.create_task(self.worker(session))
+                tg.create_task(self.worker(queue, session, user_agents, error_counter))
 
-            tg.create_task(self.stop_workers())
+            tg.create_task(self.stop_workers(queue))
 
-    async def produce(self, urls: list[str]) -> None:
-        for probe_conf in self.probes:
-            for path in expand(probe_conf["path"]):
-                for url in urls:
-                    await self.queue.put(
+    async def produce(self, urls: list[str], queue: asyncio.Queue) -> None:
+        for url in urls:
+            for probe_conf in self.probes:
+                for path in expand(probe_conf["path"]):
+                    await queue.put(
                         (
                             urllib.parse.urljoin(url, path),
                             probe_conf,
                         )
                     )
 
-    async def stop_workers(self) -> None:
-        await self.queue.join()
+    async def stop_workers(self, queue: asyncio.Queue) -> None:
+        await queue.join()
 
         log.debug("stop workers")
 
         for _ in range(self.workers_num):
-            self.queue.put_nowait((None, None))
+            queue.put_nowait((None, None))
 
     async def worker(
         self,
+        queue: asyncio.Queue,
         session: aiohttp.ClientSession,
+        user_agents: list[str],
+        error_counter: collections.Counter[str],
     ) -> None:
         while True:
-            url, conf = await self.queue.get()
+            url, conf = await queue.get()
 
             if url is None:
                 break
@@ -403,18 +420,28 @@ class Scanner:
             try:
                 hostname = urllib.parse.urlsplit(url).netloc
 
-                if self.host_error_counter[hostname] >= self.max_host_error:
+                if error_counter[hostname] >= self.max_host_error:
                     log.warning(f"maximum host error exceeded: {hostname}")
                     continue
+
+                if self.delay > 0:
+                    async with self.lock:  # блокируем асинхронное выполнение остальных заданий
+                        if (dt := self.next_request - time.monotonic()) > 0:
+                            # log.debug(f"sleep: {dt:.3f}")
+                            await asyncio.sleep(dt)
+
+                        self.next_request = time.monotonic() + self.delay
 
                 headers = conf.get("headers", {})
 
                 headers |= {
-                    "User-Agent": random.choice(self.user_agents),
+                    "User-Agent": random.choice(user_agents),
                     "Referer": "https://www.google.com/",
                 }
 
                 method = conf.get("method", "GET").upper()
+
+                await asyncio.sleep(self.delay)
 
                 response = await session.request(
                     method,
@@ -449,10 +476,10 @@ class Scanner:
                     sort_keys=True,
                 )
             except Exception as ex:
-                self.host_error_counter[hostname] += 1
+                error_counter[hostname] += 1
                 log.error(ex)
             finally:
-                self.queue.task_done()
+                queue.task_done()
 
     async def do_probe(
         self,
@@ -631,6 +658,7 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         output=args.output,
         workers_num=conf.get("workers", args.workers_num),
         timeout=conf.get("timeout", args.timeout),
+        delay=conf.get("delay", args.delay),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
     )
