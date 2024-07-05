@@ -108,7 +108,7 @@ class ExpressionExecutor:
         value: str
         pos: int
 
-    TOKENS_PATTERNS: typing.ClassVar[dict[str, str]] = {
+    TOKEN_PATTERNS: typing.ClassVar[dict[str, str]] = {
         "NULL": r"(?:null|nil)",
         "BOOLEAN": r"(?:true|false)",
         "ID": r"[a-z_][a-z0-9_]*",
@@ -128,7 +128,7 @@ class ExpressionExecutor:
     @cached_property
     def tokens_re(self) -> re.Pattern:
         return re.compile(
-            "|".join(f"(?P<{k}>{v})" for k, v in self.TOKENS_PATTERNS.items()),
+            "|".join(f"(?P<{k}>{v})" for k, v in self.TOKEN_PATTERNS.items()),
             re.IGNORECASE,
         )
 
