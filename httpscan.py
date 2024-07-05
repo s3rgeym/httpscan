@@ -361,7 +361,7 @@ class Scanner:
         default_factory=asyncio.Lock,
     )
 
-    async def scan(self, urls: list[str]) -> None:
+    async def scan(self, urls: typing.Sequence[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
@@ -385,7 +385,11 @@ class Scanner:
 
             tg.create_task(self.stop_workers(queue))
 
-    async def produce(self, urls: list[str], queue: asyncio.Queue) -> None:
+    async def produce(
+        self,
+        urls: typing.Sequence[str],
+        queue: asyncio.Queue,
+    ) -> None:
         for url in urls:
             for probe_conf in self.probes:
                 for path in expand(probe_conf["path"]):
@@ -645,13 +649,12 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         )
         return 1
 
-    urls = list(args.urls)
-    # log.debug(f"{urls=}")
+    urls = args.urls
 
     if not (args.input.isatty() and urls):
-        urls = itertools.chain(urls, filter(None, map(str.strip, args.input)))
+        urls = itertools.chain(urls, map(str.strip, args.input))
 
-    urls = list(map(normalize_url, urls))
+    urls = map(normalize_url, filter(None, urls))
 
     scanner = Scanner(
         probes=probes,
