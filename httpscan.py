@@ -631,15 +631,13 @@ def main(argv: typing.Sequence | None = None) -> None | int:
 
     log.debug("debugger: %s", ["off", "on"][DEBUGGER_ON])
 
-    conf: Config
-
-    if config_file := args.config or find_config():
-        conf = yaml.safe_load(config_file)
-        log.debug(f"config loaded: {config_file.name}")
-    else:
+    if (config_file := args.config or find_config()) is None:
         log.error("config not found")
         return 1
 
+    conf: Config = yaml.safe_load(config_file)
+    config_file.close()
+    log.debug(f"config loaded: {config_file.name}")
     probes = conf["probes"]
     # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
     # True
