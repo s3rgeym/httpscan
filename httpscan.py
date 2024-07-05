@@ -369,7 +369,7 @@ class Scanner:
 
         queue = asyncio.Queue(maxsize=self.workers_num)
 
-        error_counter: collections.Counter[str] = collections.Counter()
+        error_counter = collections.Counter()
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
         async with self.get_session(
@@ -413,7 +413,7 @@ class Scanner:
         queue: asyncio.Queue,
         session: aiohttp.ClientSession,
         user_agents: list[str],
-        error_counter: collections.Counter[str],
+        error_counter: collections.Counter,
     ) -> None:
         while True:
             url, conf = await queue.get()
