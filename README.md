@@ -37,7 +37,7 @@ httpscan -i URLs.txt -c /path/to/config.yml > results.json
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_length": 256, "content_type": "application/octet-stream", "description": "git config", "local_time": "2024-07-02 18:26:15.312354", "status_code": 200, "url": "http://127.0.0.1:8000/.git/config"}
+{"content_length": 256, "content_type": "application/octet-stream", "description": "git config", "headers": {"Connection": "close", "Date": "Fri, 05 Jul 2024 14:16:44 GMT", "Host": "127.0.0.1:8000"}, "http_version": "1.1", "local_time": "2024-07-05 17:16:44.148897", "status_code": 200, "url": "http://127.0.0.1:8000/.git/config"}
 ```
 
 Другие особенности:

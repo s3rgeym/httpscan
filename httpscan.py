@@ -18,6 +18,7 @@ import time
 import typing
 import urllib.parse
 from email.message import Message as EmailMessage
+from functools import cached_property
 
 import aiohttp
 import aiohttp.abc
@@ -91,36 +92,6 @@ def expand(s: str) -> set[str]:
     return rv
 
 
-TOKENS_RE = re.compile(
-    "|".join(
-        f"(?P<{k}>{v})"
-        for k, v in {
-            "NULL": r"(?:null|nil)",
-            "BOOLEAN": r"(?:true|false)",
-            "ID": r"[a-z_][a-z0-9_]*",
-            "NUMBER": r"\d+(\.\d+)?",
-            "STRING": r'(?:"[^"]*"|\'[^\']*\')',
-            "COMPARE": r"(?:[=!]=|[<>]=?)",
-            "NOT": r"(?:not|!)",
-            "AND": r"(?:and|&&)",
-            "OR": r"(?:or|\|\|)",
-            "LPAREN": r"\(",
-            "RPAREN": r"\)",
-            "SPACE": r"\s+",
-            "INVALID_CHAR": r".",
-            "END": r"$",
-        }.items()
-    ),
-    re.IGNORECASE,
-)
-
-
-class Token(typing.NamedTuple):
-    name: str
-    value: str
-    pos: int
-
-
 @dataclasses.dataclass
 class ExpressionExecutor:
     source: str
@@ -132,12 +103,41 @@ class ExpressionExecutor:
         self.advance()
         return self.stmt()
 
+    class Token(typing.NamedTuple):
+        name: str
+        value: str
+        pos: int
+
+    TOKENS_PATTERNS: typing.ClassVar[dict[str, str]] = {
+        "NULL": r"(?:null|nil)",
+        "BOOLEAN": r"(?:true|false)",
+        "ID": r"[a-z_][a-z0-9_]*",
+        "NUMBER": r"\d+(\.\d+)?",
+        "STRING": r'(?:"[^"]*"|\'[^\']*\')',
+        "COMPARE": r"(?:[=!]=|[<>]=?)",
+        "NOT": r"(?:not|!)",
+        "AND": r"(?:and|&&)",
+        "OR": r"(?:or|\|\|)",
+        "LPAREN": r"\(",
+        "RPAREN": r"\)",
+        "SPACE": r"\s+",
+        "INVALID_CHAR": r".",
+        "END": r"$",
+    }
+
+    @cached_property
+    def tokens_re(self) -> re.Pattern:
+        return re.compile(
+            "|".join(f"(?P<{k}>{v})" for k, v in self.TOKENS_PATTERNS.items()),
+            re.IGNORECASE,
+        )
+
     def tokenize(self, s: str) -> typing.Iterable[Token]:
-        for m in TOKENS_RE.finditer(s):
+        for m in self.tokens_re.finditer(s):
             for k, v in m.groupdict().items():
                 if v is not None:
                     if k != "SPACE":
-                        yield Token(k, v, m.start())
+                        yield self.Token(k, v, m.start())
                     break
 
     def token(self) -> Token:
@@ -437,15 +437,12 @@ class Scanner:
                         self.next_request = time.monotonic() + self.delay
 
                 headers = conf.get("headers", {})
-
                 headers |= {
                     "User-Agent": random.choice(user_agents),
                     "Referer": "https://www.google.com/",
                 }
 
                 method = conf.get("method", "GET").upper()
-
-                await asyncio.sleep(self.delay)
 
                 response = await session.request(
                     method,
@@ -458,7 +455,16 @@ class Scanner:
                     allow_redirects=False,
                 )
 
-                log.debug(f"{response.status} - {response.method} - {response.url}")
+                try:
+                    server_addr, _ = response.connection.transport.get_extra_info(
+                        "peername"
+                    )
+                except:  # noqa: E722
+                    server_addr = None
+
+                log.debug(
+                    f"{response.status} - {response.method} - {response.url} - {server_addr}"
+                )
 
                 result = await self.do_probe(response, conf)
 
@@ -469,12 +475,19 @@ class Scanner:
                     remove_empty_from_dict(
                         {
                             "url": url,
+                            "http_version": f"{response.version[0]}.{response.version[1]}",
                             "status_code": response.status,
                             "content_type": response.content_type,
                             "content_length": response.content_length,
+                            "headers": {
+                                k: v
+                                for k, v in response.headers.items()
+                                if k.lower() not in ["content-length", "content-type"]
+                            },
                             "description": conf["name"],
                             "result": result,
                             "local_time": str(datetime.datetime.now()),
+                            "server_addr": server_addr,
                         }
                     ),
                     sort_keys=True,
