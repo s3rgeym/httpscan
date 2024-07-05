@@ -677,7 +677,12 @@ def main(argv: typing.Sequence | None = None) -> None | int:
 
 def find_config() -> None | typing.TextIO:
     config_name = pathlib.Path(__file__).stem
-    for config_directory in [pathlib.Path.cwd(), pathlib.Path.home() / ".config"]:
+    for config_directory in [
+        pathlib.Path.cwd(),
+        pathlib.Path(os.environ["XDG_CONFIG_HOME"])
+        if "XDG_CONFIG_HOME" in os.environ
+        else pathlib.Path.home() / ".config",
+    ]:
         for ext in ("yml", "yaml"):
             path = config_directory / f"{config_name}.{ext}"
             if path.exists():
