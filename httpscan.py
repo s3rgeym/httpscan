@@ -111,7 +111,7 @@ class ExpressionExecutor:
         "NULL": r"(?:null|nil)",
         "BOOLEAN": r"(?:true|false)",
         "ID": r"[a-z_][a-z0-9_]*",
-        "NUMBER": r"\d+(\.\d+)?",
+        "NUMBER": r"[-+]?\d+(\.\d+)?",
         "STRING": r'(?:"[^"]*"|\'[^\']*\')',
         "COMPARE": r"(?:[=!]=|[<>]=?)",
         "NOT": r"(?:not|!)",
