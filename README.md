@@ -37,7 +37,7 @@ httpscan -i urls.txt -c /path/to/config.yml --proxy 'socks5://localhost:1080' > 
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_length": 256, "content_type": "application/octet-stream", "http_version": "1.1", "probe": "git config", "response_headers": {"Connection": "close", "Content-Length": "256", "Date": "Sat, 06 Jul 2024 03:47:43 GMT", "Host": "127.0.0.1:8000"}, "status_code": 200, "url": "http://127.0.0.1:8000/.git/config"}
+{"content_length": 256, "content_type": "application/octet-stream", "http_version": "1.1", "probe_name": "git config", "response_headers": {"Connection": "close", "Content-Length": "256", "Date": "Sat, 06 Jul 2024 22:05:56 GMT", "Host": "127.0.0.1:8000"}, "status_code": 200, "status_reason": "OK", "url": "http://127.0.0.1:8000/.git/config"}
 ```
 
 Другие особенности:
