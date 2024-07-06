@@ -6,17 +6,17 @@ probes:
   name: git config
   path: /.git/config
 # если есть листинг каталогов, то там можно поискать дампы
-- condition: status_code == 200 && mime_type == 'text/html'
+- condition: status_code == 200 && content_type == 'text/html'
   match: <title>Index of /
   name: server directory listing
   path: /{wp-content,{backup,dump}{,s}}/
 # если для деплоя используется докер, то в переменных окружения могут быть доступы к базам и тп
-- condition: status_code == 200 && mime_type == 'text/html'
+- condition: status_code == 200 && content_type == 'text/html'
   name: phpinfo
   path: /{php,}info.php
   match: <title>phpinfo\(\)</title>
 # часто бекапы сайта валяются прямо в корне
-- condition: status_code == 200 && mime_type != 'text/html'
+- condition: status_code == 200 && content_type != 'text/html'
   name: site backup
   path: /{site,www,backup}.{zip,tar.{g,x}z}
   save_to: ./download

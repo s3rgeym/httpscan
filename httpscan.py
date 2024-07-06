@@ -5,7 +5,6 @@ import collections
 import contextlib
 import copy
 import dataclasses
-import datetime
 import itertools
 import json
 import logging
@@ -455,18 +454,17 @@ class Scanner:
                     allow_redirects=False,
                 )
 
-                try:
-                    server_addr, _ = response.connection.transport.get_extra_info(
-                        "peername"
-                    )
-                except:  # noqa: E722
-                    server_addr = None
+                # try:
+                #     server_addr, _ = response.connection.transport.get_extra_info(
+                #         "peername"
+                #     )
+                # except:  # noqa: E722
+                #     server_addr = None
 
-                log.debug(
-                    f"{response.status} - {response.method} - {response.url} - {server_addr}"
-                )
+                log.debug(f"{response.status} - {response.method} - {response.url}")
 
                 result = await self.do_probe(response, conf)
+                response.close()
 
                 if result is Fail:
                     continue
@@ -475,19 +473,13 @@ class Scanner:
                     remove_empty_from_dict(
                         {
                             "url": url,
-                            "http_version": f"{response.version[0]}.{response.version[1]}",
+                            "http_version": f"{response.version.major}.{response.version.minor}",
                             "status_code": response.status,
                             "content_type": response.content_type,
                             "content_length": response.content_length,
-                            "headers": {
-                                k: v
-                                for k, v in response.headers.items()
-                                if k.lower() not in ["content-length", "content-type"]
-                            },
-                            "description": conf["name"],
+                            "response_headers": dict(response.headers),
+                            "probe": conf["name"],
                             "result": result,
-                            "local_time": str(datetime.datetime.now()),
-                            "server_addr": server_addr,
                         }
                     ),
                     sort_keys=True,
@@ -506,13 +498,13 @@ class Scanner:
         rv = {}
 
         if "condition" in conf:
-            mime_type, _ = parse_header(response.content_type)
+            # уже распарсенный
+            # mime_type, _ = parse_header(response.content_type)
 
             vars_dict = {
                 "status_code": response.status,
                 "content_length": response.content_length,
                 "content_type": response.content_type,
-                "mime_type": mime_type,
             }
 
             if not execute(conf["condition"], vars_dict):
@@ -681,6 +673,9 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         asyncio.run(scanner.scan(urls))
     except KeyboardInterrupt:
         log.warning("execution interrupted by user")
+        return 1
+    except Exception as ex:
+        log.error(ex)
         return 1
     else:
         log.info("finished!")
