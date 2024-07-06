@@ -320,7 +320,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--delay",
         help="delay before each request in seconds",
         type=float,
-        default=0,
+        default=0.05,
     )
     parser.add_argument(
         "-maxhe",
