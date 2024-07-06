@@ -451,7 +451,8 @@ class Scanner:
                     data=conf.get("data"),
                     json=conf.get("json"),
                     cookies=conf.get("cookies"),
-                    allow_redirects=False,
+                    allow_redirects=False,  # игнорируем редиректы
+                    ssl=False,  # игнорируем ошибки сертификата
                 )
 
                 # try:
