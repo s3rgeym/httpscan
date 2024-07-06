@@ -30,14 +30,14 @@ httpscan -i URLs.txt -c /path/to/config.yml > results.json
 * Каждый элемент массива `probes` содержит обязательное поле `name` с именем пробы.
 * `path` — это путь для подстановки к каждому URL. Путь поддерживает brace expansion как в BASH, например, `/{foo,ba{r,z}}.biz` (будут проверены пути `/foo.biz`, `/bar.biz` и `/baz.biz`).
 * `method` задает HTTP-метод; `params` служит для передачи параметров **QUERY STRING**, `data` — параметры передаваемые с помощью `application/x-www-form-urlencoded`, `json`..., `cookies`..., `headers`...
-* `condition` позволяет отфильтровать результаты. Имеется встроенный движок выражений. Поддерживаются операторы `==`, `!=`, `<`, `<=`, `>`, `>=`, `!` или `NOT`, `AND` или `&&`, `OR` или `||`. Все регистронезависимы. Их можно группировать с помощью скобок. Доступны переменные: `status_code`, `content_length`, `content_type`, `mime_type`... Например, `status_code == 200 and mime_type == 'application/json'`. Заметьте, что строки должны быть в кавычках...
+* `condition` позволяет отфильтровать результаты. Имеется встроенный движок выражений. Поддерживаются операторы `==`, `!=`, `<`, `<=`, `>`, `>=`, `!` или `NOT`, `AND` или `&&`, `OR` или `||`. Все регистронезависимы. Их можно группировать с помощью скобок. Доступны переменные: `status_code`, `content_length`, `content_type`... Например, `status_code == 200 and content_type == 'application/json'`. Заметьте, что строки должны быть в кавычках...
 * `match`, `not_match` проверяют на соответсвие шаблону регулярного выражения ответ сервера. `extract` и `extract_all` позволяют извлечь содержимое, если оно соответствует шаблону.
 * `save_to` сохраняет файл...
 
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_length": 256, "content_type": "application/octet-stream", "description": "git config", "headers": {"Connection": "close", "Date": "Fri, 05 Jul 2024 14:16:44 GMT", "Host": "127.0.0.1:8000"}, "http_version": "1.1", "local_time": "2024-07-05 17:16:44.148897", "status_code": 200, "url": "http://127.0.0.1:8000/.git/config"}
+{"content_length": 256, "content_type": "application/octet-stream", "http_version": "1.1", "probe": "git config", "response_headers": {"Connection": "close", "Content-Length": "256", "Date": "Sat, 06 Jul 2024 03:47:43 GMT", "Host": "127.0.0.1:8000"}, "status_code": 200, "url": "http://127.0.0.1:8000/.git/config"}
 ```
 
 Другие особенности:
