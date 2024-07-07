@@ -2,11 +2,11 @@
 requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-include-package-data = false
+# [tool.setuptools]
+# include-package-data = false
 
-[tool.setuptools.packages.find]
-exclude = ["download", "results"]
+# [tool.setuptools.packages.find]
+# exclude = ["download", "results", ".vscode"]
 
 [project]
 name = "httpscan"
