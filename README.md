@@ -7,15 +7,21 @@
 ![image](https://github.com/s3rgeym/httpscan/assets/12753171/ac4e3c1b-0ae7-437b-bdef-ec8e62d0b640)
 ![image](https://github.com/s3rgeym/httpscan/assets/12753171/41177c5f-d502-4802-b6f7-390f9572e955)
 
+Установка:
 
-В PyPi пакет называется `httpscan`.
+```bash
+pipx install httpscan
+```
 
-Установка самой последней версии:
+> Используйте pipx вместо pip для установки пакетов, содержащих исполняемые файлы
+
+Установка самой последней версии с github:
 
 ```bash
 pipx install git+https://github.com/s3rgeym/httpscan.git
 ```
-> Используйте pipx вместо pip для установки пакетов, содержащих исполняемые файлы
+
+Использование:
 
 ```bash
 httpscan -i sites.txt -o results.json -vv --proxy 'socks5://localhost:1080'
