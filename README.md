@@ -18,9 +18,9 @@ pipx install git+https://github.com/s3rgeym/httpscan.git
 > Используйте pipx вместо pip для установки пакетов, содержащих исполняемые файлы
 
 ```bash
-httpscan -h
+httpscan -i sites.txt -o results.json -vv --proxy 'socks5://localhost:1080'
 
-httpscan -i urls.txt -c /path/to/config.yml --proxy 'socks5://localhost:1080' > results.json
+httpscan -h
 ```
 
 Если путь до конфига не задан, то в текущей рабочей директории либо в `~/.config` ищутся файлы с именами `httpscan.yml` или `httpscan.yaml`.
