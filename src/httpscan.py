@@ -445,12 +445,12 @@ class Scanner:
                 if challenge := await self.detect_cf_challenge(response):
                     log.debug(f"CloudFlare challenge detected: {url}")
 
-                    resolved = await self.bypass_cf_challenge(
-                        challenge, response, headers
-                    )
+                    if not (
+                        await self.bypass_cf_challenge(challenge, response, headers)
+                    ):
+                        raise ValueError(f"can't bypass challenge: {url}")
 
-                    if not resolved:
-                        raise ValueError(f"can't solve challenge: {url}")
+                    log.debug("send request again")
 
                     response = await self.scan_request(url, headers, conf)
 
