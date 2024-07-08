@@ -559,6 +559,31 @@ class Scanner:
 
         text = await response.text()
 
+        # TODO: когда-нибудь сделать обход и капчи
+        # <title>Captcha</title>
+
+        # window.check = function (value) {
+        #     $.ajax({
+        #         type: 'POST',
+        #         url: '/captchacheck',
+        #         data: {
+        #             'captcha_value': value
+        #         }
+        #     }).done(function (data) {
+        #         if (data['success']) {
+        #             captchaIsPassed = true;
+        #             $("#text").next("p").text("");
+        #             $("#text").text(
+        #                 "IP XXX.XXX.XX.XXX has been unblocked"
+        #             );
+        #             setTimeout(do_reload, 1000);
+        #         } else {
+        #             grecaptcha.reset();
+        #         }
+        #     }).fail(function () {
+        #         grecaptcha.reset();
+        #     });
+        # };
         if "<title>One moment, please...</title>" not in text:
             return
 
