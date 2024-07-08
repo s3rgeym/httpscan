@@ -383,9 +383,9 @@ class Scanner:
             proxy_url=self.proxy_url,
             timeout=self.timeout,
         ) as self.session, asyncio.TaskGroup() as tg:
-            user_agent = await self.rand_user_agent()
-            log.debug("rand user agent: %r", user_agent)
-            self.session.headers["User-Agent"] = user_agent
+            # user_agent = await self.rand_user_agent()
+            # log.debug("rand user agent: %r", user_agent)
+            # self.session.headers["User-Agent"] = user_agent
 
             tg.create_task(self.produce(urls))
 
@@ -535,7 +535,7 @@ class Scanner:
 
         is_get = challenge.method.upper() == "GET"
         payload = {challenge.param_name: solution}
-        
+
         response1 = await self.request(
             method=challenge.method,
             url=urllib.parse.urljoin(str(response.url), challenge.action),
