@@ -25,7 +25,7 @@ import yaml
 from aiohttp_socks import ProxyConnector
 
 __version__ = "0.2.0"
-__author__ = "Sergey M"
+__author__ = "s3rgeym"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
 DEBUGGER_ON = any(name.startswith("PYDEVD_") for name in os.environ)
