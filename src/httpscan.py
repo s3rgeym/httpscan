@@ -250,9 +250,7 @@ def parse_header(h: str) -> tuple[str, dict]:
 class ProbeConfig(typing.TypedDict):
     name: str
     path: str
-    method: typing.NotRequired[
-        typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]
-    ]
+    method: typing.NotRequired[typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]]
     params: typing.NotRequired[dict]
     headers: typing.NotRequired[dict]
     cookies: typing.NotRequired[dict]
@@ -320,7 +318,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--workers",
         help="number of workers",
         type=int,
-        default=50,
+        default=20,
     )
     parser.add_argument(
         "-t",
@@ -341,7 +339,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--max-host-error",
         help="maximum number of errors for a host after which other paths will be skipped",
         type=int,
-        default=30,
+        default=20,
     )
     parser.add_argument(
         "--proxy-url",
@@ -377,7 +375,6 @@ class Scanner:
             raise ValueError("ip leak detected!")
 
         self.scan_queue = asyncio.Queue(maxsize=self.workers_num)
-        self.user_agents = await self.fetch_user_agents()
         self.error_counter = collections.Counter()
         self.next_request = 0
 
@@ -385,9 +382,11 @@ class Scanner:
         async with self.get_session(
             proxy_url=self.proxy_url,
             timeout=self.timeout,
-            # Игнориуем куки чтобы сканер не зависал после посещения N сайтов
-            cookie_jar=aiohttp.DummyCookieJar(),
-        ) as self.scan_session, asyncio.TaskGroup() as tg:
+        ) as self.session, asyncio.TaskGroup() as tg:
+            user_agent = await self.rand_user_agent()
+            log.debug("rand user agent: %r", user_agent)
+            self.session.headers["User-Agent"] = user_agent
+
             tg.create_task(self.produce(urls))
 
             for _ in range(self.workers_num):
@@ -432,19 +431,7 @@ class Scanner:
                     log.warning(f"max host error: {url}")
                     continue
 
-                if self.delay > 0:
-                    async with self.lock:  # блокируем асинхронное выполнение остальных заданий
-                        if (dt := self.next_request - time.monotonic()) > 0:
-                            # log.debug(f"sleep: {dt:.3f}")
-                            await asyncio.sleep(dt)
-
-                        self.next_request = time.monotonic() + self.delay
-
                 headers = conf.get("headers", {}).copy()
-
-                if "User-Agent" not in headers:
-                    headers["User-Agent"] = self.rand_user_agent()
-
                 response = await self.scan_request(url, headers, conf)
 
                 # TODO: Я не смог добраться до ip сервера
@@ -455,17 +442,16 @@ class Scanner:
                 # except:  # noqa: E722
                 #     server_addr = None
 
-                if challenge := await self.detect_challenge(response):
-                    log.debug("cloudflare challenge detected: {url}")
+                if challenge := await self.detect_cf_challenge(response):
+                    log.debug(f"CloudFlare challenge detected: {url}")
 
-                    resolved = await self.resolve_challenge(
+                    resolved = await self.bypass_cf_challenge(
                         challenge, response, headers
                     )
 
                     if not resolved:
                         raise ValueError(f"can't solve challenge: {url}")
 
-                    log.debug("send request again: {url}")
                     response = await self.scan_request(url, headers, conf)
 
                 result = await self.do_probe(response, conf)
@@ -492,10 +478,30 @@ class Scanner:
                     sort_keys=True,
                 )
             except Exception as ex:
-                log.warning(ex)
+                if DEBUGGER_ON:
+                    log.exception(ex)
+                else:
+                    log.warning(ex)
                 self.error_counter[hostname] += 1
             finally:
                 self.scan_queue.task_done()
+
+    async def sleep_delay(self) -> None:
+        if self.delay > 0:
+            async with self.lock:  # блокируем асинхронное выполнение остальных заданий
+                if (dt := self.next_request - time.monotonic()) > 0:
+                    # log.debug(f"sleep: {dt:.3f}")
+                    await asyncio.sleep(dt)
+
+                self.next_request = time.monotonic() + self.delay
+
+    async def request(
+        self,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> aiohttp.ClientSession:
+        await self.sleep_delay()
+        return await self.session.request(*args, **kwargs)
 
     class CloudflareChallenge(typing.NamedTuple):
         action: str
@@ -504,20 +510,13 @@ class Scanner:
         var_east: str
         var_west: str
 
-    async def resolve_challenge(
-        self,
-        challenge: CloudflareChallenge,
-        response: aiohttp.ClientResponse,
-        headers: dict[str, str],
-    ) -> bool:
+    async def solve_cf_challenge(self, challenge: CloudflareChallenge) -> int:
         try:
-            solution = int(
+            return int(
                 await check_output(
-                    [
-                        "node",
-                        "-e",
-                        f"console.log({challenge.var_east} + {challenge.var_west})",
-                    ]
+                    "node",
+                    "-e",
+                    f"console.log({challenge.var_east} + {challenge.var_west})",
                 )
             )
         except FileNotFoundError:
@@ -525,55 +524,65 @@ class Scanner:
                 "Node.js must be installed to solve CloudFlare challenge!"
             )
 
+    async def bypass_cf_challenge(
+        self,
+        challenge: CloudflareChallenge,
+        response: aiohttp.ClientResponse,
+        headers: dict[str, str],
+    ) -> bool:
+        solution = await self.solve_cf_challenge(challenge)
+
         assert challenge.method.upper() == "GET"
 
-        await asyncio.sleep(0.5)
-
-        challenge_response = await self.scan_session.get(
+        response1 = await self.request(
+            "GET",
             urllib.parse.urljoin(str(response.url), challenge.action),
             params={challenge.param_name: solution},
             headers=headers | {"Referer": str(response.url)},
             allow_redirects=False,
         )
 
-        return "Location" in challenge_response.headers
+        return response1.headers.get("Location") == str(response.url)
 
-    async def detect_challenge(
+    async def detect_cf_challenge(
         self, response: aiohttp.ClientResponse
     ) -> typing.Optional[CloudflareChallenge]:
+        # {"Cache-Control": "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0", "Connection": "close", "Content-Type": "application/zip", "Date": "Mon, 08 Jul 2024 02:01:26 GMT", "Last-Modified": "Monday, 08-Jul-2024 02:01:26 GMT", "Server": "imunify360-webshield/1.21", "Transfer-Encoding": "chunked", "cf-edge-cache": "no-cache"}
+
         if not (
-            response.headers.get("Server") == "cloudflare"
-            and 2000 > response.content_length > 1000
+            response.headers.get("Cache-Control")
+            == "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
+            and response.headers.get("cf-edge-cache") == "no-cache"
         ):
             return
 
-        try:
-            content = await response.text()
-        except UnicodeDecodeError:
+        text = await response.text()
+
+        if "<title>One moment, please...</title>" not in text:
             return
 
-        if "<title>One moment, please...</title>" not in content:
-            return
-
-        js_vars = dict(re.findall(r"(west|east)=([^,]+)", content))
+        js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
         assert js_vars
 
-        return self.ChallengeData(
-            action=re.search(r'action="([^"]+)', content).group(1),
-            method=re.search(r'method="([^"]+)"', content).group(1),
-            param_name=re.search(
-                r'<input type="hidden".+?name="([^"]+)', content
-            ).group(1),
+        return self.CloudflareChallenge(
+            action=re.search(r'action="([^"]+)', text).group(1),
+            method=re.search(r'method="([^"]+)"', text).group(1),
+            param_name=re.search(r'<input type="hidden".+?name="([^"]+)', text).group(
+                1
+            ),
             var_east=js_vars["east"],
             var_west=js_vars["west"],
         )
 
     async def scan_request(
-        self, url: str, headers: dict[str, str], probe_conf: ProbeConfig
+        self,
+        url: str,
+        headers: dict[str, str],
+        probe_conf: ProbeConfig,
     ) -> aiohttp.ClientResponse:
         method = probe_conf.get("method", "GET").upper()
 
-        response = await self.scan_session.request(
+        response = await self.request(
             method,
             url,
             headers=headers,
@@ -585,12 +594,14 @@ class Scanner:
             ssl=False,  # игнорируем ошибки сертификата
         )
 
-        log.debug(f"{response.status} - {response.method} - {response.url}")
+        log.debug(
+            f"scan request: {response.status} - {response.method} - {response.url}"
+        )
 
         return response
 
-    def rand_user_agent(self) -> str:
-        return random.choice(self.user_agents)
+    async def rand_user_agent(self) -> str:
+        return random.choice(await self.fetch_user_agents())
 
     async def do_probe(
         self,
@@ -649,8 +660,11 @@ class Scanner:
             save_path.parent.mkdir(parents=True, exist_ok=True)
 
             with save_path.open("wb") as f:
-                async for data in response.content.iter_chunked(2**16):
-                    f.write(data)
+                if response._body is None:
+                    async for data in response.content.iter_chunked(2**16):
+                        f.write(data)
+                else:
+                    f.write(response._body)
 
                 log.debug(f"saved: {save_path}")
 
@@ -667,18 +681,20 @@ class Scanner:
         print(js, file=self.output, flush=True)
 
     async def fetch_user_agents(self) -> list[str]:
-        async with self.get_session() as session:
-            r = await session.get("https://www.useragents.me/")
-            content = await r.text()
+        if not hasattr(self, "_user_agents"):
+            async with self.get_session() as session:
+                r = await session.get("https://www.useragents.me/")
+                content = await r.text()
             data = re.findall(
                 r'<textarea class="form-control" rows="8">(\[.*?\])</textarea>',
                 content,
                 re.DOTALL,
             )
             assert data, "can't fetch user agents"
-            return [
+            self._user_agents = [
                 item["ua"] for item in itertools.chain(*map(json.loads, data))
             ]
+        return list(self._user_agents)
 
     async def check_proxy(self) -> bool:
         real_ip = await self.get_public_ip()
@@ -788,9 +804,7 @@ def main(argv: typing.Sequence | None = None) -> None | int:
     urls: list[str] = args.urls
 
     if not (args.input.isatty() and urls):
-        urls: itertools.chain[str] = itertools.chain(
-            urls, map(str.strip, args.input)
-        )
+        urls: itertools.chain[str] = itertools.chain(urls, map(str.strip, args.input))
 
     urls: map[str] = map(normalize_url, filter(None, urls))
 
