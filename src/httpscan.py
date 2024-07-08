@@ -533,12 +533,14 @@ class Scanner:
     ) -> bool:
         solution = await self.solve_cf_challenge(challenge)
 
-        assert challenge.method.upper() == "GET"
-
+        is_get = challenge.method.upper() == "GET"
+        payload = {challenge.param_name: solution}
+        
         response1 = await self.request(
-            "GET",
-            urllib.parse.urljoin(str(response.url), challenge.action),
-            params={challenge.param_name: solution},
+            method=challenge.method,
+            url=urllib.parse.urljoin(str(response.url), challenge.action),
+            params=(None, payload)[is_get],
+            data=(payload, None)[is_get],
             headers=headers | {"Referer": str(response.url)},
             allow_redirects=False,
         )
