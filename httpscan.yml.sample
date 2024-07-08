@@ -19,4 +19,4 @@ probes:
 - condition: status_code == 200 && content_type != 'text/html'
   name: site backup
   path: /{site,www,backup}.{zip,tar.{g,x}z}
-  save_to: ./download
+  save_to: ./output

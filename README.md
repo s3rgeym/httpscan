@@ -43,7 +43,7 @@ probes:
 - condition: status_code == 200 && content_type != 'text/html'
   name: site backup
   path: /{site,www,backup}.{zip,tar.{g,x}z}
-  save_to: ./download
+  save_to: ./output
 ```
 
 В репозитории имеется [httpscan.yml.sample](./httpscan.yml.sample) (можно его переместить в `~/.config/httpscan.yml`).

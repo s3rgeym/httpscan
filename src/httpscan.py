@@ -17,7 +17,6 @@ import sys
 import time
 import typing
 import urllib.parse
-from email.message import Message as EmailMessage
 from functools import cached_property
 
 import aiohttp
@@ -49,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 class ColorHandler(logging.StreamHandler):
-    LEVEL_COLORS = {
+    _level_colors = {
         "DEBUG": GREEN,
         "INFO": YELLOW,
         "WARNING": PURPLE,
@@ -61,7 +60,7 @@ class ColorHandler(logging.StreamHandler):
 
     def format(self, record: logging.LogRecord) -> str:
         message = self._fmt.format(record)
-        return f"{self.LEVEL_COLORS[record.levelname]}{message}{RESET}"
+        return f"{self._level_colors[record.levelname]}{message}{RESET}"
 
 
 # stderr = functools.partial(print, file=sys.stderr, flush=True)
@@ -223,7 +222,7 @@ class ExpressionExecutor:
             return self.vars.get(self.cur_tok.value)
 
         if self.match("NUMBER"):
-            return [int, float]["." in self.cur_tok.value](self.cur_tok.value)
+            return (int, float)["." in self.cur_tok.value](self.cur_tok.value)
 
         if self.match("STRING"):
             return ast.literal_eval(self.cur_tok.value)
@@ -240,11 +239,13 @@ def execute(s: str, vars: dict[str, typing.Any]) -> typing.Any:
     return ExpressionExecutor(s).execute(vars)
 
 
-def parse_header(h: str) -> tuple[str, dict]:
-    message = EmailMessage()
-    message["content-type"] = h
-    params = message.get_params()
-    return params[0][0], dict(params[1:])
+# def parse_header(h: str) -> tuple[str, dict]:
+#     from email.message import Message
+
+#     message = Message()
+#     message["content-type"] = h
+#     params = message.get_params()
+#     return params[0][0], dict(params[1:])
 
 
 class ProbeConfig(typing.TypedDict):
@@ -443,11 +444,18 @@ class Scanner:
                 # except:  # noqa: E722
                 #     server_addr = None
 
-                if challenge := await self.detect_cf_challenge(response):
-                    log.debug(f"CloudFlare challenge detected: {url}")
-                    response = await self.bypass_cf_challenge(
+                if challenge := await self.detect_cloudflare_challenge(response):
+                    log.debug(f"cloudflare challenge detected: {url}")
+
+                    response = await self.handle_cloudflare_challenge(
                         challenge, response, headers
                     )
+
+                    assert (
+                        len(response.history) == 1
+                        and response.history[0].status == 301
+                        and response.url == response.url
+                    ), f"can't bypass challenge: {response.url}"
 
                 result = await self.do_probe(response, conf)
 
@@ -468,15 +476,10 @@ class Scanner:
                             "probe_name": conf["name"],
                             **result,
                         }
-                    ),
-                    sort_keys=True,
+                    )
                 )
             except Exception as ex:
-                if DEBUGGER_ON:
-                    log.exception(ex)
-                else:
-                    log.warning(ex)
-
+                log.error(ex, exc_info=DEBUGGER_ON)
                 self.error_counter[hostname] += 1
             finally:
                 self.scan_queue.task_done()
@@ -497,7 +500,7 @@ class Scanner:
         var_east: str
         var_west: str
 
-    async def solve_cf_challenge(self, challenge: CloudflareChallenge) -> int:
+    async def solve_cloudflare_challenge(self, challenge: CloudflareChallenge) -> int:
         try:
             return int(
                 await check_output(
@@ -511,32 +514,28 @@ class Scanner:
                 "Node.js must be installed to solve CloudFlare challenge!"
             )
 
-    async def bypass_cf_challenge(
+    async def handle_cloudflare_challenge(
         self,
         challenge: CloudflareChallenge,
-        response: aiohttp.ClientResponse,
-        headers: dict[str, str],
-    ) -> bool:
-        solution = await self.solve_cf_challenge(challenge)
+        orig_response: aiohttp.ClientResponse,
+        additional_headers: dict[str, str],
+    ) -> aiohttp.ClientResponse:
+        solution = await self.solve_cloudflare_challenge(challenge)
 
-        assert challenge.method == "get", f"unexptected {challenge.method =}"
         payload = {challenge.param_name: solution}
-
-        response1 = await self.session.get(
-            url=urllib.parse.urljoin(str(response.url), challenge.action),
-            params=payload,
-            headers=headers | {"Referer": str(response.url)},
+        challenge_endpoint = urllib.parse.urljoin(
+            str(orig_response.url), challenge.action
         )
 
-        assert (
-            len(response1.history) == 1
-            and response1.history[0].status == 301
-            and response1.url == response.url
-        ), f"can't bypass challenge: {response.url}"
+        assert challenge.method == "get", f"unexptected {challenge.method =}"
 
-        return response1
+        return await self.session.get(
+            url=challenge_endpoint,
+            params=payload,
+            headers=additional_headers | {"Referer": str(orig_response.url)},
+        )
 
-    async def detect_cf_challenge(
+    async def detect_cloudflare_challenge(
         self, response: aiohttp.ClientResponse
     ) -> typing.Optional[CloudflareChallenge]:
         # {"Cache-Control": "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0", "Connection": "close", "Content-Type": "application/zip", "Date": "Mon, 08 Jul 2024 02:01:26 GMT", "Last-Modified": "Monday, 08-Jul-2024 02:01:26 GMT", "Server": "imunify360-webshield/1.21", "Transfer-Encoding": "chunked", "cf-edge-cache": "no-cache"}
@@ -558,28 +557,30 @@ class Scanner:
         # TODO: когда-нибудь сделать обход и капчи
         # <title>Captcha</title>
 
-        # window.check = function (value) {
-        #     $.ajax({
-        #         type: 'POST',
-        #         url: '/captchacheck',
-        #         data: {
-        #             'captcha_value': value
-        #         }
-        #     }).done(function (data) {
-        #         if (data['success']) {
-        #             captchaIsPassed = true;
-        #             $("#text").next("p").text("");
-        #             $("#text").text(
-        #                 "IP XXX.XXX.XX.XXX has been unblocked"
-        #             );
-        #             setTimeout(do_reload, 1000);
-        #         } else {
-        #             grecaptcha.reset();
-        #         }
-        #     }).fail(function () {
-        #         grecaptcha.reset();
-        #     });
-        # };
+        """
+        window.check = function (value) {
+            $.ajax({
+                type: 'POST',
+                url: '/captchacheck',
+                data: {
+                    'captcha_value': value
+                }
+            }).done(function (data) {
+                if (data['success']) {
+                    captchaIsPassed = true;
+                    $("#text").next("p").text("");
+                    $("#text").text(
+                        "IP XXX.XXX.XX.XXX has been unblocked"
+                    );
+                    setTimeout(do_reload, 1000);
+                } else {
+                    grecaptcha.reset();
+                }
+            }).fail(function () {
+                grecaptcha.reset();
+            });
+        };
+        """
 
         """
         <!doctype html>
@@ -736,13 +737,13 @@ class Scanner:
 
             rv |= {
                 "saved_bytes": stat.st_size,
-                "saved_as": str(save_path),
+                "saved_as": str(save_path.resolve()),
             }
 
         return rv
 
     def output_json(self, obj: typing.Any, **kw: typing.Any) -> None:
-        js = json.dumps(obj, ensure_ascii=False, **kw)
+        js = json.dumps(obj, ensure_ascii=False, sort_keys=True, **kw)
         print(js, file=self.output, flush=True)
 
     async def get_user_agents(self) -> list[str]:
