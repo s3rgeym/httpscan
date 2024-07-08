@@ -114,7 +114,7 @@ class ExpressionExecutor:
         pos: int
 
     TOKEN_PATTERNS: typing.ClassVar[dict[str, str]] = {
-        "NULL": r"null",
+        "NULL": r"(?:null|none)",
         "BOOLEAN": r"(?:true|false)",
         "ID": r"[a-z_][a-z0-9_]*",
         "NUMBER": r"[-+]?\d+(\.\d+)?",
@@ -352,7 +352,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-Fail = typing.NewType("Fail", None)
+ProbeFailed = typing.NewType("ProbeFailed", None)
 
 
 @dataclasses.dataclass
@@ -383,17 +383,18 @@ class Scanner:
             proxy_url=self.proxy_url,
             timeout=self.timeout,
         ) as self.session, asyncio.TaskGroup() as tg:
-            # user_agent = await self.rand_user_agent()
-            # log.debug("rand user agent: %r", user_agent)
-            # self.session.headers["User-Agent"] = user_agent
+            user_agent = await self.rand_user_agent()
+            log.debug("random user agent: %r", user_agent)
+            self.session.headers["User-Agent"] = user_agent
 
             tg.create_task(self.produce(urls))
 
             for _ in range(self.workers_num):
-                tg.create_task(self.worker())
+                tg.create_task(self.worker_scan())
 
-            tg.create_task(self.stop_workers())
+            tg.create_task(self.stop_scanning())
 
+    # TODO: переименовать
     async def produce(self, urls: typing.Sequence[str]) -> None:
         for url in urls:
             for probe_conf in self.probes:
@@ -405,15 +406,15 @@ class Scanner:
                         )
                     )
 
-    async def stop_workers(self) -> None:
+    async def stop_scanning(self) -> None:
         await self.scan_queue.join()
 
-        log.debug("stop workers")
+        log.debug("stop all scanning workers")
 
         for _ in range(self.workers_num):
             self.scan_queue.put_nowait((None, None))
 
-    async def worker(self) -> None:
+    async def worker_scan(self) -> None:
         while True:
             url, conf = await self.scan_queue.get()
 
@@ -432,7 +433,7 @@ class Scanner:
                     continue
 
                 headers = conf.get("headers", {}).copy()
-                response = await self.scan_request(url, headers, conf)
+                response = await self.probe_request(url, headers, conf)
 
                 # TODO: Я не смог добраться до ip сервера
                 # try:
@@ -444,20 +445,13 @@ class Scanner:
 
                 if challenge := await self.detect_cf_challenge(response):
                     log.debug(f"CloudFlare challenge detected: {url}")
-
-                    if not (
-                        await self.bypass_cf_challenge(challenge, response, headers)
-                    ):
-                        raise ValueError(f"can't bypass challenge: {url}")
-
-                    log.debug("send request again")
-
-                    response = await self.scan_request(url, headers, conf)
+                    response = await self.bypass_cf_challenge(
+                        challenge, response, headers
+                    )
 
                 result = await self.do_probe(response, conf)
-                response.close()
 
-                if result is Fail:
+                if result is ProbeFailed:
                     continue
 
                 self.output_json(
@@ -472,7 +466,7 @@ class Scanner:
                             "content_charset": response.charset,
                             "response_headers": dict(response.headers),
                             "probe_name": conf["name"],
-                            "result": result,
+                            **result,
                         }
                     ),
                     sort_keys=True,
@@ -495,14 +489,6 @@ class Scanner:
                     await asyncio.sleep(dt)
 
                 self.next_request = time.monotonic() + self.delay
-
-    async def request(
-        self,
-        *args: typing.Any,
-        **kwargs: typing.Any,
-    ) -> aiohttp.ClientSession:
-        await self.sleep_delay()
-        return await self.session.request(*args, **kwargs)
 
     class CloudflareChallenge(typing.NamedTuple):
         action: str
@@ -533,30 +519,40 @@ class Scanner:
     ) -> bool:
         solution = await self.solve_cf_challenge(challenge)
 
-        is_get = challenge.method.upper() == "GET"
+        assert challenge.method == "get", f"unexptected {challenge.method =}"
         payload = {challenge.param_name: solution}
 
-        response1 = await self.request(
-            method=challenge.method,
+        await asyncio.sleep(0.1)
+
+        response1 = await self.session.get(
             url=urllib.parse.urljoin(str(response.url), challenge.action),
-            params=(None, payload)[is_get],
-            data=(payload, None)[is_get],
+            params=payload,
             headers=headers | {"Referer": str(response.url)},
-            allow_redirects=False,
         )
 
-        return response1.headers.get("Location") == str(response.url)
+        assert (
+            len(response1.history) == 1
+            and response1.history[0].status == 301
+            and response1.url == response.url
+        ), f"can't bypass challenge: {response.url}"
+
+        return response1
 
     async def detect_cf_challenge(
         self, response: aiohttp.ClientResponse
     ) -> typing.Optional[CloudflareChallenge]:
         # {"Cache-Control": "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0", "Connection": "close", "Content-Type": "application/zip", "Date": "Mon, 08 Jul 2024 02:01:26 GMT", "Last-Modified": "Monday, 08-Jul-2024 02:01:26 GMT", "Server": "imunify360-webshield/1.21", "Transfer-Encoding": "chunked", "cf-edge-cache": "no-cache"}
 
-        if not (
-            response.headers.get("Cache-Control")
-            == "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
-            and response.headers.get("cf-edge-cache") == "no-cache"
-        ):
+        # if not (
+        #     response.headers.get("Cache-Control")
+        #     == "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
+        #     and response.headers.get("cf-edge-cache") == "no-cache"
+        # ):
+        #     return
+
+        # {"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0", "Connection": "keep-alive", "Content-Length": "1570", "Date": "Mon, 08 Jul 2024 16:10:57 GMT", "Server": "imunify360-webshield/1.21"}
+
+        if "no-cache" not in response.headers.get("Cache-Control", "").split(", "):
             return
 
         text = await response.text()
@@ -586,15 +582,53 @@ class Scanner:
         #         grecaptcha.reset();
         #     });
         # };
+
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="robots" content="noindex, nofollow">
+            <title>One moment, please...</title>
+            <style>
+            body {
+                background: #F6F7F8;
+                color: #303131;
+                font-family: sans-serif;
+                margin-top: 45vh;
+                text-align: center;
+            }
+            </style>
+            </head>
+        <body>
+            <h1>Please wait while your request is being verified...</h1>
+            <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
+            <input type="hidden" id="wsidchk" name="wsidchk"/>
+            </form>
+            <script>
+            (function(){
+                var west=+((+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])),
+                    east=+((+!+[])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![])+(+![]+[])),
+                    x=function(){try{return !!window.addEventListener;}catch(e){return !!0;} },
+                    y=function(y,z){x() ? document.addEventListener('DOMContentLoaded',y,z) : document.attachEvent('onreadystatechange',y);};
+                y(function(){
+                    document.getElementById('wsidchk').value = west + east;
+                    document.getElementById('wsidchk-form').submit();
+                }, false);
+            })();
+            </script>
+        </body>
+        </html>
+        """
+
         if "<title>One moment, please...</title>" not in text:
             return
 
         js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
-        assert js_vars
 
         return self.CloudflareChallenge(
             action=re.search(r'action="([^"]+)', text).group(1),
-            method=re.search(r'method="([^"]+)"', text).group(1),
+            method=re.search(r'method="([^"]+)"', text).group(1).lower(),
             param_name=re.search(r'<input type="hidden".+?name="([^"]+)', text).group(
                 1
             ),
@@ -602,15 +636,17 @@ class Scanner:
             var_west=js_vars["west"],
         )
 
-    async def scan_request(
+    async def probe_request(
         self,
         url: str,
         headers: dict[str, str],
         probe_conf: ProbeConfig,
     ) -> aiohttp.ClientResponse:
+        await self.sleep_delay()
+
         method = probe_conf.get("method", "GET").upper()
 
-        response = await self.request(
+        response = await self.session.request(
             method,
             url,
             headers=headers,
@@ -619,23 +655,20 @@ class Scanner:
             json=probe_conf.get("json"),
             cookies=probe_conf.get("cookies"),
             allow_redirects=False,  # игнорируем редиректы
-            ssl=False,  # игнорируем ошибки сертификата
         )
 
-        log.debug(
-            f"scan request: {response.status} - {response.method} - {response.url}"
-        )
+        log.debug(f"{response.status} - {response.method} - {response.url}")
 
         return response
 
     async def rand_user_agent(self) -> str:
-        return random.choice(await self.fetch_user_agents())
+        return random.choice(await self.get_user_agents())
 
     async def do_probe(
         self,
         response: aiohttp.ClientResponse,
         conf: ProbeConfig,
-    ) -> dict[str, typing.Any] | Fail:
+    ) -> dict[str, typing.Any] | ProbeFailed:
         rv = {}
 
         if "condition" in conf:
@@ -649,31 +682,31 @@ class Scanner:
             }
 
             if not execute(conf["condition"], vars_dict):
-                return Fail
+                return ProbeFailed
 
         if "match" in conf:
             text = await response.text()
             if not re.search(conf["match"], text):
-                return Fail
+                return ProbeFailed
 
         if "not_match" in conf:
             text = await response.text()
             if re.search(conf["not_match"], text):
-                return Fail
+                return ProbeFailed
 
         if "extract" in conf:
             text = await response.text()
             if match := re.search(conf["extract"], text):
-                rv |= {"matches": match.groups()}
+                rv |= {"match": match.group()}
             else:
-                return Fail
+                return ProbeFailed
 
         if "extract_all" in conf:
             text = await response.text()
             if items := re.findall(conf["extract_all"], text):
                 rv |= {"matches": items}
             else:
-                return Fail
+                return ProbeFailed
 
         if "save_to" in conf:
             save_path = (
@@ -701,6 +734,12 @@ class Scanner:
             if stat.st_size == 0:
                 log.warning(f"unlink empty file: {save_path}")
                 save_path.unlink()
+                return ProbeFailed
+
+            rv |= {
+                "saved_bytes": stat.st_size,
+                "saved_as": str(save_path),
+            }
 
         return rv
 
@@ -708,33 +747,29 @@ class Scanner:
         js = json.dumps(obj, ensure_ascii=False, **kw)
         print(js, file=self.output, flush=True)
 
-    async def fetch_user_agents(self) -> list[str]:
+    async def get_user_agents(self) -> list[str]:
         if not hasattr(self, "_user_agents"):
+            log.debug("get user agents")
             async with self.get_session() as session:
-                r = await session.get("https://www.useragents.me/")
-                content = await r.text()
-            data = re.findall(
-                r'<textarea class="form-control" rows="8">(\[.*?\])</textarea>',
-                content,
-                re.DOTALL,
-            )
-            assert data, "can't fetch user agents"
-            self._user_agents = [
-                item["ua"] for item in itertools.chain(*map(json.loads, data))
-            ]
+                r = await session.get(
+                    "https://useragents.io/random/__data.json?limit=100"
+                )
+                json_data = await r.json()
+            self._user_agents = json_data["nodes"][1]["data"][2:-1][1::4]
+            assert self._user_agents
         return list(self._user_agents)
 
     async def check_proxy(self) -> bool:
-        real_ip = await self.get_public_ip()
-        log.debug(f"real ip: {mask_ip(real_ip)}")
-        proxy_ip = await self.get_public_ip(proxy_url=self.proxy_url)
+        client_ip = await self.get_ip()
+        log.debug(f"client ip: {mask_ip(client_ip)}")
+        proxy_ip = await self.get_ip(proxy_url=self.proxy_url)
         log.debug(f"proxy ip: {mask_ip(proxy_ip)}")
-        return real_ip != proxy_ip
+        return client_ip != proxy_ip
 
-    async def get_public_ip(self, **kw: typing.Any) -> str:
+    async def get_ip(self, **kw: typing.Any) -> str:
         async with self.get_session(**kw) as session:
-            response = await session.get("https://api.ipify.org?format=json")
-            return (await response.json())["ip"]
+            async with session.get("https://api.ipify.org") as response:
+                return await response.text()
 
     @contextlib.asynccontextmanager
     async def get_session(
@@ -754,7 +789,6 @@ class Scanner:
         connector = None
 
         if proxy_url:
-            log.debug(f"using proxy {self.proxy_url!r}")
             connector = ProxyConnector.from_url(self.proxy_url)
 
         async with aiohttp.ClientSession(
@@ -857,9 +891,9 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         asyncio.run(scanner.scan(urls))
     except KeyboardInterrupt:
         log.warning("execution interrupted by user")
-        return 1
+        return 2
     except Exception as ex:
-        log.error(ex)
+        log.critical(ex, exc_info=True)
         return 1
     else:
         log.info("finished!")
