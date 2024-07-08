@@ -5,13 +5,13 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug HTTP Scanner",
+      "name": "debug httpscan",
       "type": "debugpy",
       "request": "launch",
-      "program": "httpscan.py",
+      "program": "src/httpscan.py",
       "console": "integratedTerminal",
       // # php -S 127.0.0.1:8000
-      "args": ["-u", "http://127.0.0.1:8000", "-vv"]
+      "args": ["-u", "datcon.com.br", "--delay", "0", "--proxy", "socks5://localhost:1080", "-vv"]
     }
   ]
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ast
 import asyncio
 import collections
 import contextlib
@@ -24,11 +25,16 @@ import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Sergey M"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
 DEBUGGER_ON = any(name.startswith("PYDEVD_") for name in os.environ)
+
+HEADER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+HEADER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+GOOGLE_REFERER = "https://www.google.com/"
 
 CSI = "\x1b["
 RESET = f"{CSI}m"
@@ -108,11 +114,11 @@ class ExpressionExecutor:
         pos: int
 
     TOKEN_PATTERNS: typing.ClassVar[dict[str, str]] = {
-        "NULL": r"(?:null|nil)",
+        "NULL": r"null",
         "BOOLEAN": r"(?:true|false)",
         "ID": r"[a-z_][a-z0-9_]*",
         "NUMBER": r"[-+]?\d+(\.\d+)?",
-        "STRING": r'(?:"[^"]*"|\'[^\']*\')',
+        "STRING": r'(?:"(?:\\"|[^"])*"|\'(?:\\\'|[^\'])*\')',
         "COMPARE": r"(?:[=!]=|[<>]=?)",
         "NOT": r"(?:not|!)",
         "AND": r"(?:and|&&)",
@@ -220,7 +226,7 @@ class ExpressionExecutor:
             return [int, float]["." in self.cur_tok.value](self.cur_tok.value)
 
         if self.match("STRING"):
-            return self.cur_tok.value[1:-1]
+            return ast.literal_eval(self.cur_tok.value)
 
         self.unexpected_next_token()
 
@@ -244,7 +250,9 @@ def parse_header(h: str) -> tuple[str, dict]:
 class ProbeConfig(typing.TypedDict):
     name: str
     path: str
-    method: typing.NotRequired[typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]]
+    method: typing.NotRequired[
+        typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]
+    ]
     params: typing.NotRequired[dict]
     headers: typing.NotRequired[dict]
     cookies: typing.NotRequired[dict]
@@ -260,10 +268,11 @@ class ProbeConfig(typing.TypedDict):
 
 
 class Config(typing.TypedDict):
-    workers: typing.NotRequired[int]
+    workers_num: typing.NotRequired[int]
     timeout: typing.NotRequired[int | float]
     max_host_error: typing.NotRequired[int]
     probes: typing.NotRequired[list[ProbeConfig]]
+    ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
 
 
@@ -301,19 +310,24 @@ def create_parser() -> argparse.ArgumentParser:
         type=argparse.FileType(),
     )
     parser.add_argument(
+        "--ignore-hosts",
+        help="ignore hosts file",
+        type=argparse.FileType(),
+    )
+    parser.add_argument(
         "-w",
         "--workers-num",
         "--workers",
         help="number of workers",
         type=int,
-        default=10,
+        default=50,
     )
     parser.add_argument(
         "-t",
         "--timeout",
         help="request timeout",
         type=float,
-        default=10,
+        default=15.0,
     )
     parser.add_argument(
         "-d",
@@ -327,12 +341,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--max-host-error",
         help="maximum number of errors for a host after which other paths will be skipped",
         type=int,
-        default=10,
+        default=30,
     )
     parser.add_argument(
         "--proxy-url",
         "--proxy",
-        help="proxy url, eg `socks5://127.0.0.1:9050`",
+        help="proxy url, eg `socks5://localhost:1080`",
     )
     parser.add_argument(
         "-v", "--verbosity", help="be more verbosity", action="count", default=0
@@ -345,30 +359,27 @@ Fail = typing.NewType("Fail", None)
 
 @dataclasses.dataclass
 class Scanner:
-    _: dataclasses.KW_ONLY
     probes: list[ProbeConfig]
+    _: dataclasses.KW_ONLY
     output: typing.TextIO = sys.stdout
     workers_num: int = 10
     timeout: float = 10.0
     delay: float = 0.150
     max_host_error: int = 10
     proxy_url: str | None = None
-    next_request: float = 0.0
-    lock: asyncio.Lock = dataclasses.field(
-        init=False,
-        repr=False,
-        default_factory=asyncio.Lock,
-    )
+    ignore_hosts: list[str] = dataclasses.field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.lock = asyncio.Lock()
 
     async def scan(self, urls: typing.Sequence[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
-        user_agents = await self.fetch_user_agents()
-
-        queue = asyncio.Queue(maxsize=self.workers_num)
-
-        error_counter = collections.Counter()
+        self.scan_queue = asyncio.Queue(maxsize=self.workers_num)
+        self.user_agents = await self.fetch_user_agents()
+        self.error_counter = collections.Counter()
+        self.next_request = 0
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
         async with self.get_session(
@@ -376,46 +387,36 @@ class Scanner:
             timeout=self.timeout,
             # Игнориуем куки чтобы сканер не зависал после посещения N сайтов
             cookie_jar=aiohttp.DummyCookieJar(),
-        ) as session, asyncio.TaskGroup() as tg:
-            tg.create_task(self.produce(urls, queue))
+        ) as self.scan_session, asyncio.TaskGroup() as tg:
+            tg.create_task(self.produce(urls))
 
             for _ in range(self.workers_num):
-                tg.create_task(self.worker(queue, session, user_agents, error_counter))
+                tg.create_task(self.worker())
 
-            tg.create_task(self.stop_workers(queue))
+            tg.create_task(self.stop_workers())
 
-    async def produce(
-        self,
-        urls: typing.Sequence[str],
-        queue: asyncio.Queue,
-    ) -> None:
+    async def produce(self, urls: typing.Sequence[str]) -> None:
         for url in urls:
             for probe_conf in self.probes:
                 for path in expand(probe_conf["path"]):
-                    await queue.put(
+                    await self.scan_queue.put(
                         (
                             urllib.parse.urljoin(url, path),
                             probe_conf,
                         )
                     )
 
-    async def stop_workers(self, queue: asyncio.Queue) -> None:
-        await queue.join()
+    async def stop_workers(self) -> None:
+        await self.scan_queue.join()
 
         log.debug("stop workers")
 
         for _ in range(self.workers_num):
-            queue.put_nowait((None, None))
+            self.scan_queue.put_nowait((None, None))
 
-    async def worker(
-        self,
-        queue: asyncio.Queue,
-        session: aiohttp.ClientSession,
-        user_agents: list[str],
-        error_counter: collections.Counter,
-    ) -> None:
+    async def worker(self) -> None:
         while True:
-            url, conf = await queue.get()
+            url, conf = await self.scan_queue.get()
 
             if url is None:
                 break
@@ -423,8 +424,12 @@ class Scanner:
             try:
                 hostname = urllib.parse.urlsplit(url).netloc
 
-                if error_counter[hostname] >= self.max_host_error:
-                    log.warning(f"maximum host error exceeded: {hostname}")
+                if hostname in self.ignore_hosts:
+                    log.debug(f"skip host: {url}")
+                    continue
+
+                if self.error_counter[hostname] >= self.max_host_error:
+                    log.warning(f"max host error: {url}")
                     continue
 
                 if self.delay > 0:
@@ -435,26 +440,14 @@ class Scanner:
 
                         self.next_request = time.monotonic() + self.delay
 
-                headers = conf.get("headers", {})
-                headers |= {
-                    "User-Agent": random.choice(user_agents),
-                    "Referer": "https://www.google.com/",
-                }
+                headers = conf.get("headers", {}).copy()
 
-                method = conf.get("method", "GET").upper()
+                if "User-Agent" not in headers:
+                    headers["User-Agent"] = self.rand_user_agent()
 
-                response = await session.request(
-                    method,
-                    url,
-                    headers=headers,
-                    params=conf.get("params"),
-                    data=conf.get("data"),
-                    json=conf.get("json"),
-                    cookies=conf.get("cookies"),
-                    allow_redirects=False,  # игнорируем редиректы
-                    ssl=False,  # игнорируем ошибки сертификата
-                )
+                response = await self.scan_request(url, headers, conf)
 
+                # TODO: Я не смог добраться до ip сервера
                 # try:
                 #     server_addr, _ = response.connection.transport.get_extra_info(
                 #         "peername"
@@ -462,7 +455,18 @@ class Scanner:
                 # except:  # noqa: E722
                 #     server_addr = None
 
-                log.debug(f"{response.status} - {response.method} - {response.url}")
+                if challenge := await self.detect_challenge(response):
+                    log.debug("cloudflare challenge detected: {url}")
+
+                    resolved = await self.resolve_challenge(
+                        challenge, response, headers
+                    )
+
+                    if not resolved:
+                        raise ValueError(f"can't solve challenge: {url}")
+
+                    log.debug("send request again: {url}")
+                    response = await self.scan_request(url, headers, conf)
 
                 result = await self.do_probe(response, conf)
                 response.close()
@@ -488,10 +492,105 @@ class Scanner:
                     sort_keys=True,
                 )
             except Exception as ex:
-                error_counter[hostname] += 1
-                log.error(ex)
+                log.warning(ex)
+                self.error_counter[hostname] += 1
             finally:
-                queue.task_done()
+                self.scan_queue.task_done()
+
+    class CloudflareChallenge(typing.NamedTuple):
+        action: str
+        method: str
+        param_name: str
+        var_east: str
+        var_west: str
+
+    async def resolve_challenge(
+        self,
+        challenge: CloudflareChallenge,
+        response: aiohttp.ClientResponse,
+        headers: dict[str, str],
+    ) -> bool:
+        try:
+            solution = int(
+                await check_output(
+                    [
+                        "node",
+                        "-e",
+                        f"console.log({challenge.var_east} + {challenge.var_west})",
+                    ]
+                )
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Node.js must be installed to solve CloudFlare challenge!"
+            )
+
+        assert challenge.method.upper() == "GET"
+
+        await asyncio.sleep(0.5)
+
+        challenge_response = await self.scan_session.get(
+            urllib.parse.urljoin(str(response.url), challenge.action),
+            params={challenge.param_name: solution},
+            headers=headers | {"Referer": str(response.url)},
+            allow_redirects=False,
+        )
+
+        return "Location" in challenge_response.headers
+
+    async def detect_challenge(
+        self, response: aiohttp.ClientResponse
+    ) -> typing.Optional[CloudflareChallenge]:
+        if not (
+            response.headers.get("Server") == "cloudflare"
+            and 2000 > response.content_length > 1000
+        ):
+            return
+
+        try:
+            content = await response.text()
+        except UnicodeDecodeError:
+            return
+
+        if "<title>One moment, please...</title>" not in content:
+            return
+
+        js_vars = dict(re.findall(r"(west|east)=([^,]+)", content))
+        assert js_vars
+
+        return self.ChallengeData(
+            action=re.search(r'action="([^"]+)', content).group(1),
+            method=re.search(r'method="([^"]+)"', content).group(1),
+            param_name=re.search(
+                r'<input type="hidden".+?name="([^"]+)', content
+            ).group(1),
+            var_east=js_vars["east"],
+            var_west=js_vars["west"],
+        )
+
+    async def scan_request(
+        self, url: str, headers: dict[str, str], probe_conf: ProbeConfig
+    ) -> aiohttp.ClientResponse:
+        method = probe_conf.get("method", "GET").upper()
+
+        response = await self.scan_session.request(
+            method,
+            url,
+            headers=headers,
+            params=probe_conf.get("params"),
+            data=probe_conf.get("data"),
+            json=probe_conf.get("json"),
+            cookies=probe_conf.get("cookies"),
+            allow_redirects=False,  # игнорируем редиректы
+            ssl=False,  # игнорируем ошибки сертификата
+        )
+
+        log.debug(f"{response.status} - {response.method} - {response.url}")
+
+        return response
+
+    def rand_user_agent(self) -> str:
+        return random.choice(self.user_agents)
 
     async def do_probe(
         self,
@@ -513,20 +612,6 @@ class Scanner:
             if not execute(conf["condition"], vars_dict):
                 return Fail
 
-        if "extract" in conf:
-            text = await response.text()
-            if match := re.search(conf["extract"], text):
-                rv |= {"extracted_item": match.group()}
-            else:
-                return Fail
-
-        if "extract_all" in conf:
-            text = await response.text()
-            if items := re.findall(conf["extract_all"], text):
-                rv |= {"extracted_items": items}
-            else:
-                return Fail
-
         if "match" in conf:
             text = await response.text()
             if not re.search(conf["match"], text):
@@ -535,6 +620,20 @@ class Scanner:
         if "not_match" in conf:
             text = await response.text()
             if re.search(conf["not_match"], text):
+                return Fail
+
+        if "extract" in conf:
+            text = await response.text()
+            if match := re.search(conf["extract"], text):
+                rv |= {"matches": match.groups()}
+            else:
+                return Fail
+
+        if "extract_all" in conf:
+            text = await response.text()
+            if items := re.findall(conf["extract_all"], text):
+                rv |= {"matches": items}
+            else:
                 return Fail
 
         if "save_to" in conf:
@@ -546,12 +645,20 @@ class Scanner:
                     + ("", "index.html")[response.url.path.endswith("/")]
                 )
             )
+
             save_path.parent.mkdir(parents=True, exist_ok=True)
+
             with save_path.open("wb") as f:
                 async for data in response.content.iter_chunked(2**16):
                     f.write(data)
 
                 log.debug(f"saved: {save_path}")
+
+            stat = save_path.stat()
+
+            if stat.st_size == 0:
+                log.warning(f"unlink empty file: {save_path}")
+                save_path.unlink()
 
         return rv
 
@@ -569,7 +676,9 @@ class Scanner:
                 re.DOTALL,
             )
             assert data, "can't fetch user agents"
-            return [item["ua"] for item in itertools.chain(*map(json.loads, data))]
+            return [
+                item["ua"] for item in itertools.chain(*map(json.loads, data))
+            ]
 
     async def check_proxy(self) -> bool:
         real_ip = await self.get_public_ip()
@@ -588,7 +697,6 @@ class Scanner:
         self,
         *,
         timeout: float | aiohttp.ClientTimeout | None = None,
-        user_agent: str | None = None,
         proxy_url: str | None = None,
         cookie_jar: aiohttp.abc.AbstractCookieJar | None = None,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
@@ -610,10 +718,17 @@ class Scanner:
             timeout=timeout,
             cookie_jar=cookie_jar,
         ) as session:
-            if user_agent:
-                session.headers.update({"User-Agent": user_agent})
-
+            session.headers.update(self.get_default_headers())
             yield session
+
+    def get_default_headers(self) -> dict[str, str]:
+        return {
+            "Accept": HEADER_ACCEPT,
+            "Accept-Language": HEADER_ACCEPT_LANGUAGE,
+            "Referer": GOOGLE_REFERER,
+            "Upgrade-Insecure-Requests": "1",
+            "User-Agent": DEFAULT_USER_AGENT,
+        }
 
 
 def mask_ip(addr: str, ch: str = "*") -> str:
@@ -626,6 +741,18 @@ def mask_ip(addr: str, ch: str = "*") -> str:
 
 def remove_empty_from_dict(d: dict) -> dict:
     return {k: v for k, v in d.items() if v}
+
+
+async def check_output(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+    p = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        **kwargs,
+    )
+    stdout_data, stderr_data = await p.communicate()
+    if p.returncode == 0:
+        return stdout_data
 
 
 def normalize_url(u: str) -> str:
@@ -658,17 +785,26 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         )
         return 1
 
-    urls = args.urls
+    urls: list[str] = args.urls
 
     if not (args.input.isatty() and urls):
-        urls = itertools.chain(urls, map(str.strip, args.input))
+        urls: itertools.chain[str] = itertools.chain(
+            urls, map(str.strip, args.input)
+        )
 
-    urls = map(normalize_url, filter(None, urls))
+    urls: map[str] = map(normalize_url, filter(None, urls))
+
+    ignore_hosts: list[str] = (
+        list(filter(None, map(str.strip, args.ignore_hosts)))
+        if args.ignore_hosts
+        else []
+    )
 
     scanner = Scanner(
         probes=probes,
         output=args.output,
-        workers_num=conf.get("workers", args.workers_num),
+        ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
+        workers_num=conf.get("workers_num", args.workers_num),
         timeout=conf.get("timeout", args.timeout),
         delay=conf.get("delay", args.delay),
         max_host_error=conf.get("max_host_error", args.max_host_error),
