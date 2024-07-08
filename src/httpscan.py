@@ -792,7 +792,7 @@ class Scanner:
         connector = None
 
         if proxy_url:
-            connector = ProxyConnector.from_url(self.proxy_url)
+            connector = ProxyConnector.from_url(proxy_url)
 
         async with aiohttp.ClientSession(
             connector=connector,
