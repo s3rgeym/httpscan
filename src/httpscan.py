@@ -482,6 +482,7 @@ class Scanner:
                     log.exception(ex)
                 else:
                     log.warning(ex)
+
                 self.error_counter[hostname] += 1
             finally:
                 self.scan_queue.task_done()
