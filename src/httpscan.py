@@ -35,34 +35,35 @@ HEADER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 GOOGLE_REFERER = "https://www.google.com/"
 
-CSI = "\x1b["
-RESET = f"{CSI}m"
-RED = f"{CSI}31m"
-GREEN = f"{CSI}32m"
-YELLOW = f"{CSI}33m"
-BLUE = f"{CSI}34m"
-PURPLE = f"{CSI}35m"
-CYAN = f"{CSI}36m"
 
-log = logging.getLogger(__name__)
+class ANSI:
+    CSI = "\x1b["
+    RESET = f"{CSI}m"
+    RED = f"{CSI}31m"
+    GREEN = f"{CSI}32m"
+    YELLOW = f"{CSI}33m"
+    BLUE = f"{CSI}34m"
+    PURPLE = f"{CSI}35m"
+    CYAN = f"{CSI}36m"
 
 
 class ColorHandler(logging.StreamHandler):
     _level_colors = {
-        "DEBUG": GREEN,
-        "INFO": YELLOW,
-        "WARNING": PURPLE,
-        "ERROR": RED,
-        "CRITICAL": RED,
+        "DEBUG": ANSI.GREEN,
+        "INFO": ANSI.YELLOW,
+        "WARNING": ANSI.PURPLE,
+        "ERROR": ANSI.RED,
+        "CRITICAL": ANSI.RED,
     }
 
     _fmt = logging.Formatter("[ %(asctime)s ] %(levelname)8s: %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
         message = self._fmt.format(record)
-        return f"{self._level_colors[record.levelname]}{message}{RESET}"
+        return f"{self._level_colors[record.levelname]}{message}{ANSI.RESET}"
 
 
+log = logging.getLogger(__name__)
 # stderr = functools.partial(print, file=sys.stderr, flush=True)
 
 
