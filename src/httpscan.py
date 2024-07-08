@@ -522,8 +522,6 @@ class Scanner:
         assert challenge.method == "get", f"unexptected {challenge.method =}"
         payload = {challenge.param_name: solution}
 
-        await asyncio.sleep(0.1)
-
         response1 = await self.session.get(
             url=urllib.parse.urljoin(str(response.url), challenge.action),
             params=payload,
