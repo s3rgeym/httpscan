@@ -278,7 +278,8 @@ class Config(typing.TypedDict):
     proxy_url: typing.NotRequired[str]
 
 
-ProbeFailed = typing.NewType("ProbeFailed", None)
+Fail = typing.NewType("Fail", None)
+FAIL = Fail(0)
 
 
 class CloudflareChallenge(typing.NamedTuple):
@@ -394,7 +395,7 @@ class Scanner:
 
                 result = await self.do_probe(response, conf)
 
-                if result is ProbeFailed:
+                if result is FAIL:
                     continue
 
                 self.output_json(
@@ -617,7 +618,7 @@ class Scanner:
         self,
         response: aiohttp.ClientResponse,
         conf: ProbeConfig,
-    ) -> dict[str, typing.Any] | ProbeFailed:
+    ) -> dict[str, typing.Any] | Fail:
         rv = {}
 
         if "condition" in conf:
@@ -631,31 +632,31 @@ class Scanner:
             }
 
             if not execute(conf["condition"], vars_dict):
-                return ProbeFailed
+                return FAIL
 
         if "match" in conf:
             text = await response.text()
             if not re.search(conf["match"], text):
-                return ProbeFailed
+                return FAIL
 
         if "not_match" in conf:
             text = await response.text()
             if re.search(conf["not_match"], text):
-                return ProbeFailed
+                return FAIL
 
         if "extract" in conf:
             text = await response.text()
             if match := re.search(conf["extract"], text):
                 rv |= {"match": match.group()}
             else:
-                return ProbeFailed
+                return FAIL
 
         if "extract_all" in conf:
             text = await response.text()
             if items := re.findall(conf["extract_all"], text):
                 rv |= {"matches": items}
             else:
-                return ProbeFailed
+                return FAIL
 
         if "save_to" in conf:
             save_path = (
@@ -683,7 +684,7 @@ class Scanner:
             if stat.st_size == 0:
                 log.warning(f"unlink empty file: {save_path}")
                 save_path.unlink()
-                return ProbeFailed
+                return FAIL
 
             rv |= {
                 "saved_bytes": stat.st_size,
