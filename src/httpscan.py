@@ -196,6 +196,7 @@ class ExpressionExecutor:
         # операции типа сложения/вычитания не под-ся
         rv = self.primary()
         while self.match("COMPARE"):
+            # try:
             match self.cur_tok.value:
                 case ">":
                     rv = rv > self.primary()
@@ -209,6 +210,11 @@ class ExpressionExecutor:
                     rv = rv == self.primary()
                 case "!=":
                     rv = rv != self.primary()
+                case _:
+                    raise ValueError(self.cur_tok.value)
+            # # 1 < '2'
+            # except TypeError:
+            #     rv = False
         return rv
 
     def primary(self) -> typing.Any:
