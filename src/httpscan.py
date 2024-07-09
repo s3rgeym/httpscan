@@ -505,7 +505,7 @@ class Scanner:
         # no-cache в заголовке Cache-Control содержится как правило на страницах, формирующихся динамически,
         # а там всегда какой-то текст
 
-        # Так же имеется заголовок `Transfer-Encoding: chunked`, но я не верен...
+        # Так вроде же имеется заголовок `Transfer-Encoding: chunked`...
         if "no-cache" not in response.headers.get("Cache-Control", "").split(
             ", "
         ):
