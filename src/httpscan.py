@@ -67,7 +67,6 @@ log = logging.getLogger(__name__)
 # stderr = functools.partial(print, file=sys.stderr, flush=True)
 
 
-# Модифицированная версия отсюда https://algo.monster/liteproblems/1096
 def parse_range(s: str) -> list[str | int]:
     range_parts = s.split("..", 1)
     is_num_range = all(x.isdigit() for x in range_parts)
@@ -77,6 +76,7 @@ def parse_range(s: str) -> list[str | int]:
     return list(res if is_num_range else map(chr, res))
 
 
+# Модифицированная версия отсюда https://algo.monster/liteproblems/1096
 def expand(s: str) -> set[str]:
     rv = set()
 
@@ -379,7 +379,7 @@ class Scanner:
                     log.debug(f"cloudflare challenge detected: {url}")
 
                     # разгадываем скобки и возвращаем запрашиваемую страницу
-                    response = await self.handle_cloudflare_challenge(
+                    response = await self.bypass_cloudflare_challenge(
                         challenge,
                         response,
                         headers,
@@ -435,7 +435,7 @@ class Scanner:
                 "Node.js must be installed to solve cloudflare challenge!"
             )
 
-    async def handle_cloudflare_challenge(
+    async def bypass_cloudflare_challenge(
         self,
         challenge: CloudflareChallenge,
         origin_response: aiohttp.ClientResponse,
@@ -481,6 +481,8 @@ class Scanner:
 
         # {"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0", "Connection": "keep-alive", "Content-Length": "1570", "Date": "Mon, 08 Jul 2024 16:10:57 GMT", "Server": "imunify360-webshield/1.21"}
 
+        # no-cache в заголовке Cache-Control содержится как правило на страницах, формирующихся динамически,
+        # а там всегда какой-то текст
         if "no-cache" not in response.headers.get("Cache-Control", "").split(", "):
             return
 
