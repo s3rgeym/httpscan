@@ -300,12 +300,12 @@ class Scanner:
     delay: float = 0.150
     max_host_error: int = 10
     proxy_url: str | None = None
-    ignore_hosts: list[str] = dataclasses.field(default_factory=list)
+    ignore_hosts: set[str] = dataclasses.field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
 
-    async def scan(self, urls: typing.Sequence[str]) -> None:
+    async def scan(self, urls: typing.Iterable[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
             raise ValueError("ip leak detected!")
 
@@ -333,7 +333,7 @@ class Scanner:
             tg.create_task(self.stop_scanning())
 
     # TODO: переименовать
-    async def produce(self, urls: typing.Sequence[str]) -> None:
+    async def produce(self, urls: typing.Iterable[str]) -> None:
         for url in urls:
             for probe_conf in self.probes:
                 for path in expand(probe_conf["path"]):
@@ -932,10 +932,11 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     urls: map[str] = map(normalize_url, filter(None, urls))
 
-    ignore_hosts: list[str] = (
-        list(filter(None, map(str.strip, args.ignore_hosts)))
+    # in set значительно быстрее
+    ignore_hosts: set[str] = (
+        set(filter(None, map(str.strip, args.ignore_hosts)))
         if args.ignore_hosts
-        else []
+        else set()
     )
 
     scanner = Scanner(
