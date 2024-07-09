@@ -35,6 +35,10 @@ HEADER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 GOOGLE_REFERER = "https://www.google.com/"
 
+Fail = typing.NewType("Fail", None)
+
+FAIL = Fail(0)
+
 
 class ANSI:
     CSI = "\x1b["
@@ -276,10 +280,6 @@ class Config(typing.TypedDict):
     probes: typing.NotRequired[list[ProbeConfig]]
     ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
-
-
-Fail = typing.NewType("Fail", None)
-FAIL = Fail(0)
 
 
 class CloudflareChallenge(typing.NamedTuple):
