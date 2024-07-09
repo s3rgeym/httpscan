@@ -443,6 +443,8 @@ class Scanner:
     ) -> aiohttp.ClientResponse:
         solution = await self.solve_cloudflare_challenge(challenge)
 
+        log.debug(f"{solution =}")
+
         payload = {challenge.param_name: solution}
         challenge_endpoint = urllib.parse.urljoin(
             str(origin_response.url), challenge.action
@@ -562,9 +564,10 @@ class Scanner:
         return CloudflareChallenge(
             action=re.search(r'action="([^"]+)', text).group(1),
             method=re.search(r'method="([^"]+)"', text).group(1).lower(),
-            param_name=re.search(r'<input type="hidden".+?name="([^"]+)', text).group(
-                1
-            ),
+            param_name=re.search(
+                r'<input type="hidden".+?name="([^"]+)',
+                text,
+            ).group(1),
             var_east=js_vars["east"],
             var_west=js_vars["west"],
         )
