@@ -252,7 +252,9 @@ def execute(s: str, vars: dict[str, typing.Any]) -> typing.Any:
 class ProbeConfig(typing.TypedDict):
     name: str
     path: str
-    method: typing.NotRequired[typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]]
+    method: typing.NotRequired[
+        typing.Literal["GET", "HEAD", "POST", "PUT", "DELETE"]
+    ]
     params: typing.NotRequired[dict]
     headers: typing.NotRequired[dict]
     cookies: typing.NotRequired[dict]
@@ -311,10 +313,13 @@ class Scanner:
         self.next_request = 0
 
         # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
-        async with self.get_session(
-            proxy_url=self.proxy_url,
-            timeout=self.timeout,
-        ) as self.session, asyncio.TaskGroup() as tg:
+        async with (
+            self.get_session(
+                proxy_url=self.proxy_url,
+                timeout=self.timeout,
+            ) as self.session,
+            asyncio.TaskGroup() as tg,
+        ):
             user_agent = await self.rand_user_agent()
             log.debug("random user agent: %r", user_agent)
             self.session.headers["User-Agent"] = user_agent
@@ -375,7 +380,9 @@ class Scanner:
                 # except:  # noqa: E722
                 #     server_addr = None
 
-                if challenge := await self.detect_cloudflare_challenge(response):
+                if challenge := await self.detect_cloudflare_challenge(
+                    response
+                ):
                     log.debug(f"cloudflare challenge detected: {url}")
 
                     # разгадываем скобки и возвращаем запрашиваемую страницу
@@ -414,14 +421,18 @@ class Scanner:
 
     async def sleep_delay(self) -> None:
         if self.delay > 0:
-            async with self.lock:  # блокируем асинхронное выполнение остальных заданий
+            async with (
+                self.lock
+            ):  # блокируем асинхронное выполнение остальных заданий
                 if (dt := self.next_request - time.monotonic()) > 0:
                     # log.debug(f"sleep: {dt:.3f}")
                     await asyncio.sleep(dt)
 
                 self.next_request = time.monotonic() + self.delay
 
-    async def solve_cloudflare_challenge(self, challenge: CloudflareChallenge) -> int:
+    async def solve_cloudflare_challenge(
+        self, challenge: CloudflareChallenge
+    ) -> int:
         try:
             return int(
                 await check_output(
@@ -430,10 +441,10 @@ class Scanner:
                     f"console.log({challenge.var_east} + {challenge.var_west})",
                 )
             )
-        except FileNotFoundError:
+        except FileNotFoundError as ex:
             raise RuntimeError(
                 "Node.js must be installed to solve cloudflare challenge!"
-            )
+            ) from ex
 
     async def bypass_cloudflare_challenge(
         self,
@@ -485,7 +496,9 @@ class Scanner:
 
         # no-cache в заголовке Cache-Control содержится как правило на страницах, формирующихся динамически,
         # а там всегда какой-то текст
-        if "no-cache" not in response.headers.get("Cache-Control", "").split(", "):
+        if "no-cache" not in response.headers.get("Cache-Control", "").split(
+            ", "
+        ):
             return
 
         text = await response.text()
@@ -860,7 +873,11 @@ def create_parser() -> argparse.ArgumentParser:
         help="proxy url, eg `socks5://localhost:1080`",
     )
     parser.add_argument(
-        "-v", "--verbosity", help="be more verbosity", action="count", default=0
+        "-v",
+        "--verbosity",
+        help="be more verbosity",
+        action="count",
+        default=0,
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -897,7 +914,9 @@ def main(argv: typing.Sequence | None = None) -> None | int:
     urls: list[str] = args.urls
 
     if not (args.input.isatty() and urls):
-        urls: itertools.chain[str] = itertools.chain(urls, map(str.strip, args.input))
+        urls: itertools.chain[str] = itertools.chain(
+            urls, map(str.strip, args.input)
+        )
 
     urls: map[str] = map(normalize_url, filter(None, urls))
 
