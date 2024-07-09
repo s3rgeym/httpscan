@@ -51,7 +51,7 @@ class ColorHandler(logging.StreamHandler):
     _level_colors = {
         "DEBUG": ANSI.GREEN,
         "INFO": ANSI.YELLOW,
-        "WARNING": ANSI.PURPLE,
+        "WARNING": ANSI.RED,
         "ERROR": ANSI.RED,
         "CRITICAL": ANSI.RED,
     }
@@ -360,6 +360,14 @@ def create_parser() -> argparse.ArgumentParser:
 ProbeFailed = typing.NewType("ProbeFailed", None)
 
 
+class CloudflareChallenge(typing.NamedTuple):
+    action: str
+    method: str
+    param_name: str
+    var_east: str
+    var_west: str
+
+
 @dataclasses.dataclass
 class Scanner:
     probes: list[ProbeConfig]
@@ -497,13 +505,6 @@ class Scanner:
 
                 self.next_request = time.monotonic() + self.delay
 
-    class CloudflareChallenge(typing.NamedTuple):
-        action: str
-        method: str
-        param_name: str
-        var_east: str
-        var_west: str
-
     async def solve_cloudflare_challenge(self, challenge: CloudflareChallenge) -> int:
         try:
             return int(
@@ -515,7 +516,7 @@ class Scanner:
             )
         except FileNotFoundError:
             raise RuntimeError(
-                "Node.js must be installed to solve CloudFlare challenge!"
+                "Node.js must be installed to solve cloudflare challenge!"
             )
 
     async def handle_cloudflare_challenge(
@@ -629,7 +630,7 @@ class Scanner:
 
         js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
 
-        return self.CloudflareChallenge(
+        return CloudflareChallenge(
             action=re.search(r'action="([^"]+)', text).group(1),
             method=re.search(r'method="([^"]+)"', text).group(1).lower(),
             param_name=re.search(r'<input type="hidden".+?name="([^"]+)', text).group(
