@@ -11,7 +11,7 @@
       "program": "src/httpscan.py",
       "console": "integratedTerminal",
       // # php -S 127.0.0.1:8000
-      "args": ["-u", "acela-services.com", "-w", "2", "-t", "60", "--proxy", "socks5://localhost:1080", "-vv"]
+      "args": ["-u", "allindiainfotech.com", "-w", "4", "-t", "30", "--proxy", "socks5://localhost:1080", "-vv"]
     }
   ]
 }

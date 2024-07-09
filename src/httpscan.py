@@ -378,15 +378,12 @@ class Scanner:
                 if challenge := await self.detect_cloudflare_challenge(response):
                     log.debug(f"cloudflare challenge detected: {url}")
 
+                    # разгадываем скобки и возвращаем запрашиваемую страницу
                     response = await self.handle_cloudflare_challenge(
-                        challenge, response, headers
+                        challenge,
+                        response,
+                        headers,
                     )
-
-                    assert (
-                        len(response.history) == 1
-                        and response.history[0].status == 301
-                        and response.url == response.url
-                    ), f"can't bypass challenge: {response.url}"
 
                 result = await self.do_probe(response, conf)
 
@@ -441,23 +438,34 @@ class Scanner:
     async def handle_cloudflare_challenge(
         self,
         challenge: CloudflareChallenge,
-        orig_response: aiohttp.ClientResponse,
+        origin_response: aiohttp.ClientResponse,
         additional_headers: dict[str, str],
     ) -> aiohttp.ClientResponse:
         solution = await self.solve_cloudflare_challenge(challenge)
 
         payload = {challenge.param_name: solution}
         challenge_endpoint = urllib.parse.urljoin(
-            str(orig_response.url), challenge.action
+            str(origin_response.url), challenge.action
         )
 
         assert challenge.method == "get", f"unexptected {challenge.method =}"
 
-        return await self.session.get(
+        challenge_response = await self.session.get(
             url=challenge_endpoint,
             params=payload,
-            headers=additional_headers | {"Referer": str(orig_response.url)},
+            headers=additional_headers | {"Referer": str(origin_response.url)},
         )
+
+        assert (
+            len(challenge_response.history) == 1
+            and challenge_response.history[0].status == 301
+            # 'Set-Cookie': 'wschkid=ae96fb3bf715d463c7f3328d2e4377cb9aa6b155.1720572164.1; Expires=Thu, 08-Aug-24 00:42:44 GMT; Domain=<censored>; Path=/; HttpOnly; SameSite=Lax'
+            and challenge.param_name
+            in challenge_response.history[0].headers.get("Set-Cookie", "")
+            and challenge_response.url == origin_response.url
+        ), f"can't bypass challenge: {origin_response.url}"
+
+        return challenge_response
 
     async def detect_cloudflare_challenge(
         self, response: aiohttp.ClientResponse
