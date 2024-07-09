@@ -885,7 +885,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: typing.Sequence | None = None) -> None | int:
+def main(argv: typing.Sequence[str] | None = None) -> None | int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
