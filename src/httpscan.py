@@ -276,87 +276,6 @@ class Config(typing.TypedDict):
     proxy_url: typing.NotRequired[str]
 
 
-def create_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="configurable http scanner",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "-u",
-        "--url",
-        dest="urls",
-        help="target url to probe(s)",
-        default=[],
-        nargs="+",
-    )
-    parser.add_argument(
-        "-i",
-        "--input",
-        help="input file with urls",
-        type=argparse.FileType(),
-        default="-",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        help="output file to results in JSONL",
-        type=argparse.FileType("w"),
-        default="-",
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        help="config file in YAML format",
-        type=argparse.FileType(),
-    )
-    parser.add_argument(
-        "--ignore-hosts",
-        help="ignore hosts file",
-        type=argparse.FileType(),
-    )
-    parser.add_argument(
-        "-w",
-        "--workers-num",
-        "--workers",
-        help="number of workers",
-        type=int,
-        default=20,
-    )
-    parser.add_argument(
-        "-t",
-        "--timeout",
-        help="request timeout",
-        type=float,
-        default=15.0,
-    )
-    parser.add_argument(
-        "-d",
-        "--delay",
-        help="delay before each request in seconds",
-        type=float,
-        default=0.05,
-    )
-    parser.add_argument(
-        "-maxhe",
-        "--max-host-error",
-        help="maximum number of errors for a host after which other paths will be skipped",
-        type=int,
-        default=20,
-    )
-    parser.add_argument(
-        "--proxy-url",
-        "--proxy",
-        help="proxy url, eg `socks5://localhost:1080`",
-    )
-    parser.add_argument(
-        "-v", "--verbosity", help="be more verbosity", action="count", default=0
-    )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
-    return parser
-
-
 ProbeFailed = typing.NewType("ProbeFailed", None)
 
 
@@ -841,6 +760,101 @@ def normalize_url(u: str) -> str:
     return u if "://" in u else f"https://{u}"
 
 
+def find_config() -> None | typing.TextIO:
+    config_name = pathlib.Path(__file__).stem
+    for config_directory in [
+        pathlib.Path.cwd(),
+        pathlib.Path(os.environ["XDG_CONFIG_HOME"])
+        if "XDG_CONFIG_HOME" in os.environ
+        else pathlib.Path.home() / ".config",
+    ]:
+        for ext in ("yml", "yaml"):
+            path = config_directory / f"{config_name}.{ext}"
+            if path.exists():
+                return path.open()
+
+
+def create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="configurable http scanner",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-u",
+        "--url",
+        dest="urls",
+        help="target url to probe(s)",
+        default=[],
+        nargs="+",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        help="input file with urls",
+        type=argparse.FileType(),
+        default="-",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="output file to results in JSONL",
+        type=argparse.FileType("w"),
+        default="-",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        help="config file in YAML format",
+        type=argparse.FileType(),
+    )
+    parser.add_argument(
+        "--ignore-hosts",
+        help="ignore hosts file",
+        type=argparse.FileType(),
+    )
+    parser.add_argument(
+        "-w",
+        "--workers-num",
+        "--workers",
+        help="number of workers",
+        type=int,
+        default=20,
+    )
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        help="request timeout",
+        type=float,
+        default=15.0,
+    )
+    parser.add_argument(
+        "-d",
+        "--delay",
+        help="delay before each request in seconds",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument(
+        "-maxhe",
+        "--max-host-error",
+        help="maximum number of errors for a host after which other paths will be skipped",
+        type=int,
+        default=20,
+    )
+    parser.add_argument(
+        "--proxy-url",
+        "--proxy",
+        help="proxy url, eg `socks5://localhost:1080`",
+    )
+    parser.add_argument(
+        "-v", "--verbosity", help="be more verbosity", action="count", default=0
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    return parser
+
+
 def main(argv: typing.Sequence | None = None) -> None | int:
     parser = create_parser()
     args = parser.parse_args(argv)
@@ -901,20 +915,6 @@ def main(argv: typing.Sequence | None = None) -> None | int:
         return 1
     else:
         log.info("finished!")
-
-
-def find_config() -> None | typing.TextIO:
-    config_name = pathlib.Path(__file__).stem
-    for config_directory in [
-        pathlib.Path.cwd(),
-        pathlib.Path(os.environ["XDG_CONFIG_HOME"])
-        if "XDG_CONFIG_HOME" in os.environ
-        else pathlib.Path.home() / ".config",
-    ]:
-        for ext in ("yml", "yaml"):
-            path = config_directory / f"{config_name}.{ext}"
-            if path.exists():
-                return path.open()
 
 
 if __name__ == "__main__":
