@@ -381,6 +381,12 @@ class Scanner:
                 # except:  # noqa: E722
                 #     server_addr = None
 
+                # Сделать удаление кук для доменов отличных от текущего?
+                # список доменов:
+                # > set(v['domain'] for v in self.session.cookie_jar)
+                # удалить все куки для домена:
+                # > self.session.cookie_jar.clear_domain(domain)
+
                 if challenge := await self.detect_cloudflare_challenge(
                     response
                 ):
@@ -402,6 +408,7 @@ class Scanner:
                     remove_empty_from_dict(
                         {
                             "url": url,
+                            "host": hostname,
                             "http_version": f"{response.version.major}.{response.version.minor}",
                             "status_code": response.status,
                             "status_reason": response.reason,
@@ -497,6 +504,8 @@ class Scanner:
 
         # no-cache в заголовке Cache-Control содержится как правило на страницах, формирующихся динамически,
         # а там всегда какой-то текст
+
+        # Так же имеется заголовок `Transfer-Encoding: chunked`, но я не верен...
         if "no-cache" not in response.headers.get("Cache-Control", "").split(
             ", "
         ):
@@ -573,7 +582,7 @@ class Scanner:
         if "<title>One moment, please...</title>" not in text:
             return
 
-        assert 'west + east' in text
+        assert "west + east" in text
 
         js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
 
