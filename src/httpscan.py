@@ -573,6 +573,8 @@ class Scanner:
         if "<title>One moment, please...</title>" not in text:
             return
 
+        assert 'west + east' in text
+
         js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
 
         return CloudflareChallenge(
