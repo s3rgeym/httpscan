@@ -873,7 +873,7 @@ def parse_args(
         "--timeout",
         help="total timeout",
         type=float,
-        default=300.0,  # общее время чтения из сокета
+        default=300.0,  # общее время чтения из сокета (для скачки огромного файла хватит)
     )
     parser.add_argument(
         "-rt",
@@ -948,7 +948,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     # True
     if not all(set(item) > ProbeConfig.__required_keys__ for item in probes):
         log.error(
-            f"invalid config: probe required keys: {', '.join(ProbeConfig.__required_keys__)}"
+            f"each probes element must have required keys: {', '.join(ProbeConfig.__required_keys__)}"
         )
         return 1
 
