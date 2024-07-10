@@ -405,9 +405,7 @@ class Scanner:
                         headers,
                     )
 
-                result = await self.do_probe(response, conf)
-
-                if result is FAIL:
+                if (result := await self.do_probe(response, conf)) is FAIL:
                     continue
 
                 self.output_json(
