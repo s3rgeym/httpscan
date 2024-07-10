@@ -464,6 +464,7 @@ class Scanner:
         origin_response: aiohttp.ClientResponse,
         additional_headers: dict[str, str],
     ) -> aiohttp.ClientResponse:
+        assert challenge.method == "get", f"unexptected {challenge.method =}"
         solution = await self.solve_cloudflare_challenge(challenge)
 
         log.debug(f"{solution =}")
@@ -472,8 +473,6 @@ class Scanner:
         challenge_endpoint = urllib.parse.urljoin(
             str(origin_response.url), challenge.action
         )
-
-        assert challenge.method == "get", f"unexptected {challenge.method =}"
 
         challenge_response = await self.session.get(
             url=challenge_endpoint,
