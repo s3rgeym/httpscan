@@ -341,6 +341,7 @@ class Scanner:
     # TODO: переименовать
     async def produce(self, urls: typing.Iterable[str]) -> None:
         for url in urls:
+            # .hostname переводится в нижний регистр
             if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
                 log.debug(f"skip ignored host url: {url}")
                 continue
@@ -955,7 +956,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     # in set значительно быстрее
     ignore_hosts: set[str] = set(
-        filter(None, map(str.strip, args.ignore_hosts))
+        map(str.lower, filter(None, map(str.strip, args.ignore_hosts)))
         if args.ignore_hosts
         else []
     )
