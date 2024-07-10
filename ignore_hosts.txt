@@ -1,2 +1,2 @@
-google.com
-*.google.com
+GOOGLE.COM
+*.GOOGLE.COM
