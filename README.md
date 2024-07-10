@@ -80,7 +80,3 @@ python -m venv .venv
 # установит все зависимости из pyproject.toml
 pip install .
 ```
-
-![image](https://github.com/s3rgeym/httpscan/assets/12753171/ac4e3c1b-0ae7-437b-bdef-ec8e62d0b640)
-![image](https://github.com/s3rgeym/httpscan/assets/12753171/41177c5f-d502-4802-b6f7-390f9572e955)
-![image](https://github.com/s3rgeym/httpscan/assets/12753171/000033e3-e921-40f8-8cbf-e984b35c4518)
