@@ -24,7 +24,7 @@ import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __author__ = "s3rgeym"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
@@ -282,6 +282,9 @@ class ProbeConfig(typing.TypedDict):
 class Config(typing.TypedDict):
     workers_num: typing.NotRequired[int]
     timeout: typing.NotRequired[int | float]
+    connect_timeout: typing.NotRequired[int | float]
+    read_timeout: typing.NotRequired[int | float]
+    # proxy_timeout: typing.NotRequired[int | float]
     max_host_error: typing.NotRequired[int]
     probes: typing.NotRequired[list[ProbeConfig]]
     ignore_hosts: typing.NotRequired[list[str]]
@@ -302,14 +305,18 @@ class Scanner:
     _: dataclasses.KW_ONLY
     output: typing.TextIO = sys.stdout
     workers_num: int = 10
-    timeout: float = 10.0
-    delay: float = 0.150
+    timeout: int | float | aiohttp.ClientTimeout = 30
+    delay: float = 0.02
     max_host_error: int = 10
     proxy_url: str | None = None
+    # proxy_timeout: int | float = 10
     ignore_hosts: set[str] = dataclasses.field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
+
+        if isinstance(self.timeout, (int, float)):
+            self.timeout = aiohttp.ClientTimeout(self.timeout)
 
     async def scan(self, urls: typing.Iterable[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
@@ -319,24 +326,27 @@ class Scanner:
         self.error_counter = collections.Counter()
         self.next_request = 0
 
-        # Если `asyncio.TaskGroup()` первым идет, то падает `RuntimeError: Session is closed`
-        async with (
-            self.get_session(
-                proxy_url=self.proxy_url,
-                timeout=self.timeout,
-            ) as self.session,
-            asyncio.TaskGroup() as tg,
-        ):
+        async with self.get_session(
+            proxy_url=self.proxy_url,
+        ) as self.session:
             user_agent = await self.rand_user_agent()
             log.debug("random user agent: %r", user_agent)
             self.session.headers["User-Agent"] = user_agent
 
-            tg.create_task(self.produce(urls))
+            await asyncio.gather(
+                *[self.worker() for _ in range(self.workers_num)],
+                self.produce(urls),
+                self.stop_workers(),
+                return_exceptions=True,
+            )
 
-            for _ in range(self.workers_num):
-                tg.create_task(self.worker_scan())
+    async def stop_workers(self) -> None:
+        await self.scan_queue.join()
 
-            tg.create_task(self.stop_scanning())
+        log.debug("stop workers")
+
+        for _ in range(self.workers_num):
+            self.scan_queue.put_nowait((None, None))
 
     # TODO: переименовать
     async def produce(self, urls: typing.Iterable[str]) -> None:
@@ -357,22 +367,17 @@ class Scanner:
                         )
                     )
 
-    async def stop_scanning(self) -> None:
-        await self.scan_queue.join()
-
-        log.debug("stop all scanning workers")
-
-        for _ in range(self.workers_num):
-            self.scan_queue.put_nowait((None, None))
-
-    async def worker_scan(self) -> None:
+    async def worker(self) -> None:
         while True:
-            url, conf = await self.scan_queue.get()
-
-            if url is None:
-                break
-
             try:
+                url, conf = await self.scan_queue.get()
+
+                if url is None:
+                    log.debug(
+                        "stop worker: %s", asyncio.current_task().get_name()
+                    )
+                    break
+
                 netloc = urllib.parse.urlsplit(url).netloc
 
                 if self.error_counter[netloc] >= self.max_host_error:
@@ -627,6 +632,8 @@ class Scanner:
 
         method = probe_conf.get("method", "GET").upper()
 
+        log.debug(f"send: {method} {url}")
+
         response = await self.session.request(
             method,
             url,
@@ -638,7 +645,9 @@ class Scanner:
             allow_redirects=False,  # игнорируем редиректы
         )
 
-        log.debug(f"{response.status} - {response.method} - {response.url}")
+        log.debug(
+            f"response: {response.status} - {response.method} - {response.url}"
+        )
 
         return response
 
@@ -756,26 +765,19 @@ class Scanner:
     async def get_session(
         self,
         *,
-        timeout: float | aiohttp.ClientTimeout | None = None,
         proxy_url: str | None = None,
         cookie_jar: aiohttp.abc.AbstractCookieJar | None = None,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
-        if isinstance(timeout, (int, float)):
-            timeout = aiohttp.ClientTimeout(
-                total=None,
-                sock_connect=timeout,
-                sock_read=timeout,
-            )
-
         connector = None
 
         if proxy_url:
+            # self.proxy_timeout?
             connector = ProxyConnector.from_url(proxy_url)
 
         async with aiohttp.ClientSession(
             connector=connector,
-            timeout=timeout,
             cookie_jar=cookie_jar,
+            timeout=self.timeout,
         ) as session:
             session.headers.update(self.get_default_headers())
             yield session
@@ -832,7 +834,27 @@ def find_config() -> None | typing.TextIO:
                 return path.open()
 
 
-def create_parser() -> argparse.ArgumentParser:
+class NameSpace(argparse.Namespace):
+    urls: list[str]
+    input: typing.TextIO
+    output: typing.TextIO
+    config: typing.TextIO
+    ignore_hosts: typing.TextIO
+    workers_num: int
+    timeout: int | float
+    connect_timeout: int | float
+    read_timeout: int | float
+    # proxy_timeout: int | float
+    delay: int | float
+    max_host_error: int
+    proxy_url: str
+    verbosity: int
+
+
+# sequence = list | tuple
+def parse_args(
+    argv: typing.Sequence[str] | None = None,
+) -> tuple[argparse.ArgumentParser, NameSpace]:
     parser = argparse.ArgumentParser(
         description="configurable http scanner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -878,15 +900,35 @@ def create_parser() -> argparse.ArgumentParser:
         "--workers",
         help="number of workers",
         type=int,
-        default=30,
+        default=20,
     )
     parser.add_argument(
         "-t",
         "--timeout",
-        help="request timeout",
+        help="total timeout",
         type=float,
-        default=15.0,
+        default=300.0,  # общее время чтения из сокета
     )
+    parser.add_argument(
+        "-rt",
+        "--read-timeout",
+        help="socket read timeout",
+        type=float,
+        default=5.0,
+    )
+    parser.add_argument(
+        "-ct",
+        "--connect-timeout",
+        help="socket read timeout",
+        type=float,
+        default=10.0,
+    )
+    # parser.add_argument(
+    #     "--proxy-timeout",
+    #     help="proxy connect timeout",
+    #     type=float,
+    #     default=10.0,
+    # )
     parser.add_argument(
         "-d",
         "--delay",
@@ -916,12 +958,11 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
-    return parser
+    return parser, parser.parse_args(argv, namespace=NameSpace())
 
 
 def main(argv: typing.Sequence[str] | None = None) -> None | int:
-    parser = create_parser()
-    args = parser.parse_args(argv)
+    _, args = parse_args(argv=argv)
 
     lvl = max(logging.DEBUG, logging.WARNING - logging.DEBUG * args.verbosity)
     log.setLevel(lvl)
@@ -963,15 +1004,22 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     log.debug("ignored hosts: %d", len(ignore_hosts))
 
+    timeout = aiohttp.ClientTimeout(
+        total=conf.get("timeout", args.timeout),
+        sock_connect=conf.get("connect_timeout", args.connect_timeout),
+        sock_read=conf.get("read_timeout", args.read_timeout),
+    )
+
     scanner = Scanner(
         probes=probes,
         output=args.output,
-        ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
+        timeout=timeout,
         workers_num=conf.get("workers_num", args.workers_num),
-        timeout=conf.get("timeout", args.timeout),
         delay=conf.get("delay", args.delay),
+        ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
+        # proxy_timeout=conf.get("proxy_timeout", args.proxy_timeout),
     )
 
     try:
