@@ -341,6 +341,12 @@ class Scanner:
     # TODO: переименовать
     async def produce(self, urls: typing.Iterable[str]) -> None:
         for url in urls:
+            if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
+                log.debug(f"skip ignored host url: {url}")
+                continue
+
+            log.debug(f"substitute paths to {url}")
+
             for probe_conf in self.probes:
                 for path in expand(probe_conf["path"]):
                     await self.scan_queue.put(
@@ -366,13 +372,9 @@ class Scanner:
                 break
 
             try:
-                hostname = urllib.parse.urlsplit(url).netloc
+                netloc = urllib.parse.urlsplit(url)
 
-                if hostname in self.ignore_hosts:
-                    log.debug(f"skip host: {url}")
-                    continue
-
-                if self.error_counter[hostname] >= self.max_host_error:
+                if self.error_counter[netloc] >= self.max_host_error:
                     log.warning(f"max host error: {url}")
                     continue
 
@@ -412,7 +414,7 @@ class Scanner:
                     remove_empty_from_dict(
                         {
                             "url": url,
-                            "host": hostname,
+                            "host": netloc,
                             "http_version": f"{response.version.major}.{response.version.minor}",
                             "status_code": response.status,
                             "status_reason": response.reason,
@@ -427,9 +429,23 @@ class Scanner:
                 )
             except Exception as ex:
                 log.error(ex, exc_info=DEBUGGER_ON)
-                self.error_counter[hostname] += 1
+                self.error_counter[netloc] += 1
             finally:
                 self.scan_queue.task_done()
+
+    def is_ignored_host(self, hostname: str) -> bool:
+        hostname_parts = hostname.split(".")
+
+        # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
+        hostname_wildcards = set(
+            [hostname]
+            + [
+                ".".join(["*"] + hostname_parts[i:])
+                for i in range(1, len(hostname_parts))
+            ]
+        )
+
+        return bool(hostname_wildcards & self.ignore_hosts)
 
     async def sleep_delay(self) -> None:
         if self.delay > 0:
@@ -849,7 +865,9 @@ def create_parser() -> argparse.ArgumentParser:
         type=argparse.FileType(),
     )
     parser.add_argument(
+        "-igh",
         "--ignore-hosts",
+        "--ignore",
         help="ignore hosts file",
         type=argparse.FileType(),
     )
@@ -936,11 +954,13 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     urls: map[str] = map(normalize_url, filter(None, urls))
 
     # in set значительно быстрее
-    ignore_hosts: set[str] = (
-        set(filter(None, map(str.strip, args.ignore_hosts)))
+    ignore_hosts: set[str] = set(
+        filter(None, map(str.strip, args.ignore_hosts))
         if args.ignore_hosts
-        else set()
+        else []
     )
+
+    log.debug("ignored hosts: %d", len(ignore_hosts))
 
     scanner = Scanner(
         probes=probes,
