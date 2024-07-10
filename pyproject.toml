@@ -44,7 +44,6 @@ httpscan = 'httpscan:main'
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-include-package-data = false
 
 # https://docs.astral.sh/ruff/configuration/
 [tool.ruff]
