@@ -334,7 +334,7 @@ class Scanner:
             self.session.headers["User-Agent"] = user_agent
 
             await asyncio.gather(
-                *[self.worker() for _ in range(self.workers_num)],
+                *(self.worker() for _ in range(self.workers_num)),
                 self.produce(urls),
                 self.stop_workers(),
                 return_exceptions=True,
@@ -444,11 +444,11 @@ class Scanner:
 
         # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
         hostname_wildcards = set(
-            [hostname]
-            + [
+            [
                 ".".join(["*"] + hostname_parts[i:])
                 for i in range(1, len(hostname_parts))
             ]
+            + [hostname]
         )
 
         return bool(hostname_wildcards & self.ignore_hosts)
@@ -732,18 +732,18 @@ class Scanner:
         self,
         *,
         proxy_url: str | None = None,
-        cookie_jar: aiohttp.abc.AbstractCookieJar | None = None,
+        **kwargs: typing.Any,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
-        connector = None
-
-        if proxy_url:
-            # self.proxy_timeout?
-            connector = ProxyConnector.from_url(proxy_url)
+        connector = (
+            ProxyConnector.from_url(proxy_url, limit=0)
+            if proxy_url
+            else aiohttp.TCPConnector(limit=0)
+        )
 
         async with aiohttp.ClientSession(
             connector=connector,
-            cookie_jar=cookie_jar,
             timeout=self.timeout,
+            **kwargs,
         ) as session:
             session.headers.update(self.get_default_headers())
             yield session
@@ -868,13 +868,7 @@ def parse_args(
         type=int,
         default=20,
     )
-    parser.add_argument(
-        "-t",
-        "--timeout",
-        help="total timeout",
-        type=float,
-        default=300.0,  # общее время чтения из сокета (для скачки огромного файла хватит)
-    )
+    parser.add_argument("-t", "--timeout", help="total timeout", type=float)
     parser.add_argument(
         "-rt",
         "--read-timeout",
