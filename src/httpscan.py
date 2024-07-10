@@ -24,7 +24,7 @@ import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __author__ = "s3rgeym"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
@@ -373,10 +373,10 @@ class Scanner:
                 break
 
             try:
-                netloc = urllib.parse.urlsplit(url)
+                netloc = urllib.parse.urlsplit(url).netloc
 
                 if self.error_counter[netloc] >= self.max_host_error:
-                    log.warning(f"max host error: {url}")
+                    log.warning(f"max host error: {netloc}")
                     continue
 
                 headers = conf.get("headers", {}).copy()
@@ -878,7 +878,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--workers",
         help="number of workers",
         type=int,
-        default=20,
+        default=30,
     )
     parser.add_argument(
         "-t",
