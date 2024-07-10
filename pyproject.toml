@@ -29,6 +29,9 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
+dev = [
+  "ruff"
+]
 
 [project.urls]
 Repository = "https://github.com/s3rgeym/httpscan.git"
