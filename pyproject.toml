@@ -39,6 +39,9 @@ version = {attr = "httpscan.__version__"}
 [project.scripts]
 httpscan = 'httpscan:main'
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 # https://docs.astral.sh/ruff/configuration/
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
