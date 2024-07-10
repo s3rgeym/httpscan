@@ -941,7 +941,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     # True
     if not all(set(item) > ProbeConfig.__required_keys__ for item in probes):
         log.error(
-            f"invalid config: each probes element must have keys: {', '.join(ProbeConfig.__required_keys__)}"
+            f"invalid config: probe required keys: {', '.join(ProbeConfig.__required_keys__)}"
         )
         return 1
 
