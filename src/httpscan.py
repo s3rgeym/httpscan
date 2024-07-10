@@ -542,47 +542,13 @@ class Scanner:
         # <title>Captcha</title>
 
         """
-        window.check = function (value) {
-            $.ajax({
-                type: 'POST',
-                url: '/captchacheck',
-                data: {
-                    'captcha_value': value
-                }
-            }).done(function (data) {
-                if (data['success']) {
-                    captchaIsPassed = true;
-                    $("#text").next("p").text("");
-                    $("#text").text(
-                        "IP XXX.XXX.XX.XXX has been unblocked"
-                    );
-                    setTimeout(do_reload, 1000);
-                } else {
-                    grecaptcha.reset();
-                }
-            }).fail(function () {
-                grecaptcha.reset();
-            });
-        };
-        """
-
-        """
         <!doctype html>
         <html lang="en">
         <head>
             <meta charset="utf-8">
             <meta name="robots" content="noindex, nofollow">
             <title>One moment, please...</title>
-            <style>
-            body {
-                background: #F6F7F8;
-                color: #303131;
-                font-family: sans-serif;
-                margin-top: 45vh;
-                text-align: center;
-            }
-            </style>
-            </head>
+            <!-- ... -->
         <body>
             <h1>Please wait while your request is being verified...</h1>
             <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
