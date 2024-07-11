@@ -385,6 +385,7 @@ class Scanner:
                                 self.make_probe(session, url, path, probe)
                             )
 
+                    log.debug(f"probe tasks for {url}: {len(probe_tasks)}")
                     await asyncio.gather(*probe_tasks, return_exceptions=True)
             except BaseException as ex:
                 log.exception(ex)
@@ -1006,8 +1007,8 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         probes=probes,
         output=args.output,
         timeout=conf.get("timeout", args.timeout),
-        sock_connect=conf.get("connect_timeout", args.connect_timeout),
-        sock_read=conf.get("read_timeout", args.read_timeout),
+        connect_timeout=conf.get("connect_timeout", args.connect_timeout),
+        read_timeout=conf.get("read_timeout", args.read_timeout),
         workers_num=conf.get("workers_num", args.workers_num),
         delay=conf.get("delay", args.delay) / 1000,
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
