@@ -892,7 +892,7 @@ def parse_args(
         "--workers",
         help="number of workers",
         type=int,
-        default=20,
+        default=30,
     )
     parser.add_argument("-t", "--timeout", help="total timeout sec", type=float)
     parser.add_argument(
@@ -924,7 +924,7 @@ def parse_args(
         "--delay",
         help="delay in milliseconds",
         type=int,
-        default=120,
+        default=50,
     )
     parser.add_argument(
         "-maxhe",
