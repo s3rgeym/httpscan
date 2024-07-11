@@ -24,7 +24,7 @@ import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 __author__ = "Sergey M"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
@@ -402,17 +402,18 @@ class Scanner:
         path: str,
         probe: ProbeDict,
     ) -> None:
-        host = urllib.parse.urlparse(base_url).netloc
-
-        if self.host_error[host] >= self.max_host_error:
-            log.warning(f"max host error exceeded: {host}")
-            return
-
-        url = urllib.parse.urljoin(base_url, path)
-        headers = probe.get("headers", {}).copy()
         # параллельно будет совершаться не более workers_num запросов
-        try:
-            async with self.sem:
+        async with self.sem:
+            try:
+                host = urllib.parse.urlparse(base_url).netloc
+
+                if self.host_error[host] >= self.max_host_error:
+                    log.warning(f"max host error exceeded: {host}")
+                    return
+
+                url = urllib.parse.urljoin(base_url, path)
+                headers = probe.get("headers", {}).copy()
+
                 response = await self.send_probe_request(
                     session, url, headers, probe
                 )
@@ -453,9 +454,9 @@ class Scanner:
                         }
                     )
                 )
-        except Exception as ex:
-            log.warning(ex)
-            self.host_error[host] += 1
+            except Exception as ex:
+                log.warning(ex)
+                self.host_error[host] += 1
 
     def is_ignored_host(self, hostname: str) -> bool:
         hostname_parts = hostname.split(".")
