@@ -34,6 +34,7 @@ HEADER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avi
 HEADER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 GOOGLE_REFERER = "https://www.google.com/"
+
 USER_AGENTS_ENDPOINT = "https://useragents.io/random/__data.json?limit=1000"
 
 
@@ -313,6 +314,7 @@ class Scanner:
     proxy_url: str | None = None
     # proxy_timeout: int | float = 10
     ignore_hosts: set[str] = dataclasses.field(default_factory=set)
+    follow_redirects: bool = False
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
@@ -366,9 +368,14 @@ class Scanner:
 
                 # Для каждого url используем новую сессию из-за того, что сессии
                 # со временем начинают тормозить
+                # root_url = urllib.parse.urljoin(url, "/")
                 async with self.get_session(
                     user_agent=user_agent,
                     proxy_url=self.proxy_url,
+                    # headers={
+                    #     "Origin": root_url[:-1],
+                    #     "Referer": root_url
+                    # },
                 ) as session:
                     probe_tasks = []
                     for probe in self.probes:
@@ -618,7 +625,7 @@ class Scanner:
             data=probe.get("data"),
             json=probe.get("json"),
             cookies=probe.get("cookies"),
-            allow_redirects=False,
+            follow_redirects=self.follow_redirects,
         )
 
         log.debug(
@@ -741,6 +748,7 @@ class Scanner:
         *,
         user_agent: str | None = None,
         proxy_url: str | None = None,
+        headers: dict[str, str] = {},
         **kwargs: typing.Any,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
         connector = (
@@ -759,8 +767,10 @@ class Scanner:
                     "Accept": HEADER_ACCEPT,
                     "Accept-Language": HEADER_ACCEPT_LANGUAGE,
                     "Referer": GOOGLE_REFERER,
-                    "Upgrade-Insecure-Requests": "1",
+                    # перебрасывает с http:// на https://
+                    # "Upgrade-Insecure-Requests": "1",
                     "User-Agent": user_agent or DEFAULT_USER_AGENT,
+                    **headers,
                 }
             )
             yield session
@@ -822,6 +832,7 @@ class NameSpace(argparse.Namespace):
     delay: int | float
     max_host_error: int
     proxy_url: str
+    follow_redirects: bool
     verbosity: int
 
 
@@ -914,7 +925,14 @@ def parse_args(
     parser.add_argument(
         "--proxy-url",
         "--proxy",
-        help="proxy url, eg `socks5://localhost:1080`",
+        help="proxy url, e.g. 'socks5://localhost:1080'",
+    )
+    parser.add_argument(
+        "-F",
+        "--follow-redirects",
+        help="follow redirects",
+        action=argparse.BooleanOptionalAction,
+        default=False,
     )
     parser.add_argument(
         "-v",
@@ -987,6 +1005,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
+        follow_redirects=conf.get("follow_redirects", args.follow_redirects),
         # proxy_timeout=conf.get("proxy_timeout", args.proxy_timeout),
     )
 
