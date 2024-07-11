@@ -892,7 +892,7 @@ def parse_args(
         "--workers",
         help="number of workers",
         type=int,
-        default=30,
+        default=20,
     )
     parser.add_argument("-t", "--timeout", help="total timeout sec", type=float)
     parser.add_argument(
@@ -931,7 +931,7 @@ def parse_args(
         "--max-host-error",
         help="maximum number of errors for a host after which other paths will be skipped",
         type=int,
-        default=20,
+        default=10,
     )
     parser.add_argument(
         "--proxy-url",
