@@ -628,7 +628,7 @@ class Scanner:
             data=probe.get("data"),
             json=probe.get("json"),
             cookies=probe.get("cookies"),
-            follow_redirects=self.follow_redirects,
+            allow_redirects=self.follow_redirects,
         )
 
         log.debug(
