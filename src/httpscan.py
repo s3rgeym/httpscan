@@ -308,19 +308,17 @@ class Scanner:
     _: dataclasses.KW_ONLY
     output: typing.TextIO = sys.stdout
     workers_num: int = 10
-    timeout: int | float | aiohttp.ClientTimeout = 30
+    timeout: int | float | None = None
+    connect_timeout: int | float = 10.0
+    read_timeout: int | float = 5.0
     delay: float = 0.05
     max_host_error: int = 10
     proxy_url: str | None = None
-    # proxy_timeout: int | float = 10
     ignore_hosts: set[str] = dataclasses.field(default_factory=set)
     follow_redirects: bool = False
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
-
-        if isinstance(self.timeout, (int, float)):
-            self.timeout = aiohttp.ClientTimeout(self.timeout)
 
     async def scan(self, urls: typing.Iterable[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
@@ -755,15 +753,21 @@ class Scanner:
         headers: dict[str, str] = {},
         **kwargs: typing.Any,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
-        connector = (
+        con = (
             ProxyConnector.from_url(proxy_url, limit=0)
             if proxy_url
             else aiohttp.TCPConnector(limit=0)
         )
 
+        tmt = aiohttp.ClientTimeout(
+            total=self.timeout,
+            sock_connect=self.connect_timeout,
+            sock_read=self.read_timeout,
+        )
+
         async with aiohttp.ClientSession(
-            connector=connector,
-            timeout=self.timeout,
+            connector=con,
+            timeout=tmt,
             **kwargs,
         ) as session:
             session.headers.update(
@@ -998,23 +1002,18 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     log.debug("ignored hosts: %d", len(ignore_hosts))
 
-    timeout = aiohttp.ClientTimeout(
-        total=conf.get("timeout", args.timeout),
-        sock_connect=conf.get("connect_timeout", args.connect_timeout),
-        sock_read=conf.get("read_timeout", args.read_timeout),
-    )
-
     scanner = Scanner(
         probes=probes,
         output=args.output,
-        timeout=timeout,
+        timeout=conf.get("timeout", args.timeout),
+        sock_connect=conf.get("connect_timeout", args.connect_timeout),
+        sock_read=conf.get("read_timeout", args.read_timeout),
         workers_num=conf.get("workers_num", args.workers_num),
         delay=conf.get("delay", args.delay) / 1000,
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
-        # proxy_timeout=conf.get("proxy_timeout", args.proxy_timeout),
     )
 
     try:
