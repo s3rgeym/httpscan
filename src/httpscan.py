@@ -346,11 +346,14 @@ class Scanner:
     async def produce(self, urls: typing.Iterable[str]) -> None:
         for url in urls:
             # hostname всегда в нижнем регистре
-            if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
-                log.debug(f"skip ignored host url: {url}")
-                continue
+            try:
+                if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
+                    log.debug(f"skip ignored host url: {url}")
+                    continue
 
-            await self.queue.put(url)
+                await self.queue.put(url)
+            except BaseException as ex:
+                log.exception(ex)
 
     async def worker(self) -> None:
         task_name = asyncio.current_task().get_name()
@@ -711,7 +714,7 @@ class Scanner:
 
             rv |= {
                 "saved_bytes": stat.st_size,
-                "saved_as": str(save_path),  # str(save_path.resolve()),
+                "saved_as": str(save_path.resolve()),
             }
 
         return rv
