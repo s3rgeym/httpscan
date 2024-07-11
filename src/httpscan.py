@@ -887,13 +887,13 @@ def parse_args(
         type=int,
         default=20,
     )
-    parser.add_argument("-t", "--timeout", help="total timeout", type=float)
+    parser.add_argument("-t", "--timeout", help="total timeout sec", type=float)
     parser.add_argument(
         "-r",
         "--read-timeout",
         "--socket-read",
         "--read",
-        help="socket read timeout",
+        help="socket read timeout sec",
         type=float,
         default=5.0,
     )
@@ -902,7 +902,7 @@ def parse_args(
         "--connect-timeout",
         "--socket-connect",
         "--connect",
-        help="socket read timeout",
+        help="socket read timeout sec",
         type=float,
         default=10.0,
     )
@@ -915,7 +915,7 @@ def parse_args(
     parser.add_argument(
         "-d",
         "--delay",
-        help="delay before each request in milliseconds",
+        help="delay in milliseconds",
         type=int,
         default=120,
     )
