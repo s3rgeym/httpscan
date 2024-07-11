@@ -314,11 +314,17 @@ class Scanner:
     delay: float = 0.05
     max_host_error: int = 10
     proxy_url: str | None = None
-    ignore_hosts: set[str] = dataclasses.field(default_factory=set)
+    ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
+        # переводим в нижний регистр
+        self.ignore_hosts: set[str] = set(
+            map(str.lower, self.ignore_hosts or [])
+        )
+        if self.proxy_url is None:
+            self.proxy_url = os.getenv("PROXY_URL")
 
     async def scan(self, urls: typing.Iterable[str]) -> None:
         if self.proxy_url and not (await self.check_proxy()):
@@ -369,15 +375,7 @@ class Scanner:
 
                 # Для каждого url используем новую сессию из-за того, что сессии
                 # со временем начинают тормозить
-                # root_url = urllib.parse.urljoin(url, "/")
-                async with self.get_session(
-                    user_agent=user_agent,
-                    proxy_url=self.proxy_url,
-                    # headers={
-                    #     "Origin": root_url[:-1],
-                    #     "Referer": root_url
-                    # },
-                ) as session:
+                async with self.get_session(user_agent=user_agent) as session:
                     probe_tasks = []
                     for probe in self.probes:
                         for path in expand(probe["path"]):
@@ -734,9 +732,9 @@ class Scanner:
         return list(self._user_agents)
 
     async def check_proxy(self) -> bool:
-        client_ip = await self.get_ip()
+        client_ip = await self.get_ip(use_proxy=False)
         log.debug(f"client ip: {mask_ip(client_ip)}")
-        proxy_ip = await self.get_ip(proxy_url=self.proxy_url)
+        proxy_ip = await self.get_ip()
         log.debug(f"proxy ip: {mask_ip(proxy_ip)}")
         return client_ip != proxy_ip
 
@@ -750,13 +748,13 @@ class Scanner:
         self,
         *,
         user_agent: str | None = None,
-        proxy_url: str | None = None,
+        use_proxy: bool = True,
         headers: dict[str, str] = {},
         **kwargs: typing.Any,
     ) -> typing.AsyncIterator[aiohttp.ClientSession]:
         con = (
-            ProxyConnector.from_url(proxy_url, limit=0)
-            if proxy_url
+            ProxyConnector.from_url(self.proxy_url, limit=0)
+            if use_proxy and self.proxy_url
             else aiohttp.TCPConnector(limit=0)
         )
 
@@ -987,21 +985,18 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     urls: list[str] = args.urls
 
-    if not (args.input.isatty() and urls):
+    if not args.input.isatty():
         urls: itertools.chain[str] = itertools.chain(
             urls, map(str.strip, args.input)
         )
 
     urls: map[str] = map(normalize_url, filter(None, urls))
 
-    # in set значительно быстрее
-    ignore_hosts: set[str] = set(
-        map(str.lower, filter(None, map(str.strip, args.ignore_hosts)))
+    ignore_hosts: map[str] | None = (
+        filter(None, map(str.strip, args.ignore_hosts))
         if args.ignore_hosts
-        else []
+        else None
     )
-
-    log.debug("ignored hosts: %d", len(ignore_hosts))
 
     scanner = Scanner(
         probes=probes,
