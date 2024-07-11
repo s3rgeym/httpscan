@@ -977,7 +977,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     probes = conf["probes"]
     # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
     # True
-    if not all(set(item) > ProbeDict.__required_keys__ for item in probes):
+    if not all(set(item) >= ProbeDict.__required_keys__ for item in probes):
         log.error(
             f"each probes element must have required keys: {', '.join(ProbeDict.__required_keys__)}"
         )
