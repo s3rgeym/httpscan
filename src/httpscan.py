@@ -367,7 +367,7 @@ class Scanner:
                     break
 
                 user_agent = await self.rand_user_agent()
-                log.debug(f"user agent for <{url}>: {user_agent}")
+                log.debug(f"user agent for {url}: {user_agent}")
 
                 # Для каждого url используем новую сессию из-за того, что сессии
                 # со временем начинают тормозить
