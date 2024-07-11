@@ -309,7 +309,7 @@ class Scanner:
     output: typing.TextIO = sys.stdout
     workers_num: int = 10
     timeout: int | float | aiohttp.ClientTimeout = 30
-    delay: float = 0.02
+    delay: float = 0.05
     max_host_error: int = 10
     proxy_url: str | None = None
     # proxy_timeout: int | float = 10
@@ -915,9 +915,9 @@ def parse_args(
     parser.add_argument(
         "-d",
         "--delay",
-        help="delay before each request in seconds",
-        type=float,
-        default=0.12,
+        help="delay before each request in milliseconds",
+        type=int,
+        default=120,
     )
     parser.add_argument(
         "-maxhe",
@@ -1005,7 +1005,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         output=args.output,
         timeout=timeout,
         workers_num=conf.get("workers_num", args.workers_num),
-        delay=conf.get("delay", args.delay),
+        delay=conf.get("delay", args.delay) / 1000,
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
