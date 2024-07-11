@@ -711,7 +711,7 @@ class Scanner:
 
             rv |= {
                 "saved_bytes": stat.st_size,
-                "saved_as": str(save_path.resolve()),
+                "saved_as": str(save_path),  # str(save_path.resolve()),
             }
 
         return rv
