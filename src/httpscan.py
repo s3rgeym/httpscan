@@ -889,15 +889,19 @@ def parse_args(
     )
     parser.add_argument("-t", "--timeout", help="total timeout", type=float)
     parser.add_argument(
-        "-rt",
+        "-r",
         "--read-timeout",
+        "--socket-read",
+        "--read",
         help="socket read timeout",
         type=float,
         default=5.0,
     )
     parser.add_argument(
-        "-ct",
+        "-C",
         "--connect-timeout",
+        "--socket-connect",
+        "--connect",
         help="socket read timeout",
         type=float,
         default=10.0,
@@ -925,10 +929,10 @@ def parse_args(
     parser.add_argument(
         "--proxy-url",
         "--proxy",
-        help="proxy url, e.g. 'socks5://localhost:1080'",
+        help="proxy url, e.g. socks5://localhost:1080",
     )
     parser.add_argument(
-        "-F",
+        "-f",
         "--follow-redirects",
         help="follow redirects",
         action=argparse.BooleanOptionalAction,
