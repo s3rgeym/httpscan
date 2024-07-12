@@ -367,7 +367,7 @@ class Scanner:
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
-    skip_statuses: list[int] = dataclasses.field(default_factory=list)
+    skip_statuses: typing.Sequence[int] = dataclasses.field(default_factory=list)
     # читаем и проверяем только первые 256kb
     probe_read_length: int = 1 << 18
 
@@ -620,7 +620,7 @@ class Scanner:
             len(challenge_response.history) == 1
             and challenge_response.history[0].status == 301
             # 'Set-Cookie': 'wschkid=ae96fb3bf715d463c7f3328d2e4377cb9aa6b155.1720572164.1; Expires=Thu, 08-Aug-24 00:42:44 GMT; Domain=<censored>; Path=/; HttpOnly; SameSite=Lax'
-            and challenge.param_name
+            and challenge.param
             in challenge_response.history[0].headers.get("Set-Cookie", "")
             and challenge_response.url == origin_response.url
         ), f"can't bypass challenge: {origin_response.url}"
