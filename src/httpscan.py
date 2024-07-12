@@ -367,6 +367,7 @@ class Scanner:
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
+    skip_statuses: list[int] = dataclasses.field(default_factory=list)
     # читаем и проверяем только первые 256kb
     probe_read_length: int = 1 << 18
 
@@ -491,6 +492,12 @@ class Scanner:
                 response = await self.send_probe_request(
                     session, url, headers, probe
                 )
+
+                if response.status in self.skip_statuses:
+                    logger.warning(
+                        f"skip status: {response.status} {response.url}"
+                    )
+                    return
 
                 content: bytes = await response.content.read(
                     self.probe_read_length
@@ -850,8 +857,9 @@ class NameSpace(argparse.Namespace):
     read_timeout: int | float
     delay: int | float
     max_host_error: int
-    proxy_url: str
     follow_redirects: bool
+    skip_statuses: list[int]
+    proxy_url: str
     probe_read_length: int
     verbosity: int
 
@@ -941,16 +949,24 @@ def parse_args(
         default=10,
     )
     parser.add_argument(
-        "--proxy-url",
-        "--proxy",
-        help="proxy url, e.g. socks5://localhost:1080",
-    )
-    parser.add_argument(
         "-f",
         "--follow-redirects",
         help="follow redirects",
         action=argparse.BooleanOptionalAction,
         default=False,
+    )
+    parser.add_argument(
+        "-ss",
+        "--skip-statuses",
+        nargs="+",
+        default=[],
+        type=int,
+        help="always skip status codes",
+    )
+    parser.add_argument(
+        "--proxy-url",
+        "--proxy",
+        help="proxy url, e.g. socks5://localhost:1080",
     )
     parser.add_argument(
         "--probe-read-length",
@@ -1015,6 +1031,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
+        skip_statuses=conf.get("skip_statuses", args.skip_statuses),
         probe_read_length=conf.get("probe_read_length", args.probe_read_length),
     )
 
