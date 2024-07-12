@@ -16,7 +16,9 @@ probes:
   path: /{php,}info.php
   match: <title>phpinfo\(\)</title>
 # часто бекапы сайта валяются прямо в корне
-- condition: status_code == 200 && content_type != 'text/html'
+- condition: status_code == 200
   name: site backup
+  # если есть теги, то это точно не архив
+  not_match: (?i)<html
   path: /{site,www,backup}.{zip,tar.{g,x}z}
   save_to: ./output

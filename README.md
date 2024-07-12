@@ -44,10 +44,11 @@ httpscan -h
 ```yaml
 probes:
 # ...
-- condition: status_code == 200 && content_type != 'text/html'
-  name: site backup
-  path: /{site,www,backup}.{zip,tar.{g,x}z}
-  save_to: ./output
+- condition: status_code == 200
+  match: INSERT INTO
+  name: database dump
+  path: /{db,dump,database,backup}.sql
+  save_to: output
 ```
 
 В репозитории имеется [sample.httpscan.yml](./sample.httpscan.yml) (можно его переместить в `~/.config/httpscan.yml`).
@@ -56,13 +57,13 @@ probes:
 * `path` — это путь для подстановки к каждому URL. Путь поддерживает brace expansion как в BASH, например, `/{foo,ba{r,z}}.biz` (будут проверены пути `/foo.biz`, `/bar.biz` и `/baz.biz`).
 * `method` задает HTTP-метод; `params` служит для передачи параметров **QUERY STRING**, `data` — параметры передаваемые с помощью `application/x-www-form-urlencoded`, `json`..., `cookies`..., `headers`...
 * `condition` позволяет отфильтровать результаты. Имеется встроенный движок выражений. Поддерживаются операторы `==`, `!=`, `<`, `<=`, `>`, `>=`, `!` или `NOT`, `AND` или `&&`, `OR` или `||`. Все регистронезависимы. Их можно группировать с помощью круглых скобок. Доступны переменные: `status_code`, `content_length`, `content_type`... Например, `status_code == 200 and content_type == 'application/json'`. Заметьте, что строки должны быть в кавычках...
-* `match`, `not_match` проверяют на соответсвие шаблону регулярного выражения ответ сервера. `extract` и `extract_all` позволяют извлечь содержимое, если оно соответствует шаблону.
+* `match`, `not_match` проверяют на соответсвие шаблону регулярного выражения ответ сервера. `extract` и `extract_all` позволяют извлечь содержимое, если оно соответствует шаблону. Так как тело ответа может быть гигантским, то из сокета читаются только первые 256 килобайт данных.
 * `save_to` сохраняет файл...
 
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_length": 256, "content_type": "application/octet-stream", "http_version": "1.1", "probe_name": "git config", "response_headers": {"Connection": "close", "Content-Length": "256", "Date": "Sat, 06 Jul 2024 22:05:56 GMT", "Host": "127.0.0.1:8000"}, "status_code": 200, "status_reason": "OK", "url": "http://127.0.0.1:8000/.git/config"}
+{"content_charset": "UTF-8", "content_length": 667, "content_type": "text/html", "host": "<censored>", "http_version": "1.1", "input": "http://<censored>/", "probe_name": "server directory listing", "response_headers": {"Content-Encoding": "gzip", "Content-Length": "667", "Content-Type": "text/html;charset=UTF-8", "Date": "Fri, 12 Jul 2024 16:14:55 GMT", "Server": "Apache/2.4.25 (Debian)", "Vary": "Accept-Encoding"}, "status_code": 200, "status_reason": "OK", "url": "http://<censored>/includes/"}
 ```
 
 Другие особенности:
