@@ -875,6 +875,10 @@ def parse_size(s: str) -> int:
     return int(size) * 1024 ** ["", "k", "m", "g"].index(unit.lower())
 
 
+def filter_empty_lines(fp: typing.TextIO) -> filter[str]:
+    return filter(None, map(str.rstrip, fp))
+
+
 class NameSpace(argparse.Namespace):
     urls: list[str]
     input: typing.TextIO
@@ -1036,17 +1040,13 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     probes = conf["probes"]
 
-    urls: list[str] = args.urls
+    urls = args.urls
 
     if not args.input.isatty():
-        urls: itertools.chain[str] = itertools.chain(
-            urls, filter(None, map(str.rstrip, args.input))
-        )
+        urls = itertools.chain(urls, filter_empty_lines(args.input))
 
-    ignore_hosts: map[str] | None = (
-        filter(None, filter(None, map(str.rstrip, args.ignore_hosts)))
-        if args.ignore_hosts
-        else None
+    ignore_hosts = (
+        filter_empty_lines(args.ignore_hosts) if args.ignore_hosts else []
     )
 
     scanner = Scanner(
