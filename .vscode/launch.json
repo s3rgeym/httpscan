@@ -11,7 +11,7 @@
       "program": "src/httpscan.py",
       "console": "integratedTerminal",
       // # php -S 127.0.0.1:8000
-      "args": ["-u", "www.google.com", "https://www.iziwork.com", "--ignore", "ignore_hosts.txt", "-t", "15", "--proxy", "socks5://localhost:1080", "-vv"]
+      "args": ["-u", "www.google.com", "https://www.iziwork.com", "--ignore", "ignore_hosts.txt", "-w", "2", "--proxy", "socks5://localhost:1080", "-vv"]
     }
   ]
 }
