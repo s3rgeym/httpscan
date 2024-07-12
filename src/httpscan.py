@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import ast
 import asyncio
@@ -294,12 +296,61 @@ class ConfigDict(typing.TypedDict):
     proxy_url: typing.NotRequired[str]
 
 
-class CloudflareChallenge(typing.NamedTuple):
+@dataclasses.dataclass
+class CloudflareChallenge:
+    """
+    <!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="robots" content="noindex, nofollow">
+        <title>One moment, please...</title>
+        <!-- ... -->
+    <body>
+        <h1>Please wait while your request is being verified...</h1>
+        <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
+        <input type="hidden" id="wsidchk" name="wsidchk"/>
+        </form>
+        <script>
+        (function(){
+            var west=+((+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])),
+                east=+((+!+[])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![])+(+![]+[])),
+                x=function(){try{return !!window.addEventListener;}catch(e){return !!0;} },
+                y=function(y,z){x() ? document.addEventListener('DOMContentLoaded',y,z) : document.attachEvent('onreadystatechange',y);};
+            y(function(){
+                document.getElementById('wsidchk').value = west + east;
+                document.getElementById('wsidchk-form').submit();
+            }, false);
+        })();
+        </script>
+    </body>
+    </html>
+    """
+
     action: str
     method: str
-    param_name: str
-    var_east: str
-    var_west: str
+    param: str
+    east: str
+    west: str
+
+    @classmethod
+    def from_text(
+        cls: typing.Type[CloudflareChallenge], text: str
+    ) -> CloudflareChallenge:
+        assert "west + east" in text
+
+        js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
+
+        return cls(
+            action=re.search(r'action="([^"]+)', text).group(1),
+            method=re.search(r'method="([^"]+)"', text).group(1).lower(),
+            param=re.search(
+                r'<input type="hidden".+?name="([^"]+)',
+                text,
+            ).group(1),
+            east=js_vars["east"],
+            west=js_vars["west"],
+        )
 
 
 @dataclasses.dataclass
@@ -311,11 +362,13 @@ class Scanner:
     timeout: int | float | None = None
     connect_timeout: int | float = 10.0
     read_timeout: int | float = 5.0
-    delay: float = 0.05
+    delay: int = 120
     max_host_error: int = 10
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
+    # читаем и проверяем только первые 256kb
+    probe_read_length: int = 1 << 18
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
@@ -351,7 +404,7 @@ class Scanner:
         #         self.queue.put_nowait(None)
 
         workers = [
-            asyncio.create_task(self.worker(), name=f"Workwer-{i + 1}")
+            asyncio.create_task(self.worker(), name=f"worker_{i}")
             for i in range(self.workers_num)
         ]
 
@@ -393,6 +446,7 @@ class Scanner:
                         user_agent=user_agent
                     ) as session:
                         probe_tasks = []
+
                         for probe in self.probes:
                             for path in expand(probe["path"]):
                                 probe_tasks.append(
@@ -402,6 +456,7 @@ class Scanner:
                         logger.debug(
                             f"probe tasks for {url}: {len(probe_tasks)}"
                         )
+
                         await asyncio.gather(
                             *probe_tasks, return_exceptions=True
                         )
@@ -437,10 +492,18 @@ class Scanner:
                     session, url, headers, probe
                 )
 
-                if challenge := await self.detect_cloudflare_challenge(
-                    response
-                ):
+                content: bytes = await response.content.read(
+                    self.probe_read_length
+                )
+
+                text_content: str = content.decode(
+                    response.charset or "utf-8", errors="replace"
+                )
+
+                if "<title>One moment, please...</title>" in text_content:
                     logger.debug(f"cloudflare challenge detected: {url}")
+
+                    challenge = CloudflareChallenge.from_text(text_content)
 
                     # разгадываем скобки и возвращаем запрашиваемую страницу
                     response = await self.bypass_cloudflare_challenge(
@@ -451,7 +514,12 @@ class Scanner:
                     )
 
                 if (
-                    result := await self.get_probe_result(response, probe)
+                    result := await self.get_probe_result(
+                        response,
+                        content,
+                        text_content,
+                        probe,
+                    )
                 ) is FAIL:
                     return
 
@@ -500,7 +568,7 @@ class Scanner:
                     # logger.debug(f"sleep: {dt:.3f}")
                     await asyncio.sleep(dt)
 
-                self.next_request = time.monotonic() + self.delay
+                self.next_request = time.monotonic() + self.delay / 1000
 
     async def solve_cloudflare_challenge(
         self, challenge: CloudflareChallenge
@@ -510,7 +578,7 @@ class Scanner:
                 await check_output(
                     "node",
                     "-e",
-                    f"console.log({challenge.var_east} + {challenge.var_west})",
+                    f"console.log({challenge.west} + {challenge.east})",
                 )
             )
         except FileNotFoundError as ex:
@@ -530,7 +598,7 @@ class Scanner:
 
         logger.debug(f"{solution = }")
 
-        payload = {challenge.param_name: solution}
+        payload = {challenge.param: solution}
         challenge_endpoint = urllib.parse.urljoin(
             str(origin_response.url), challenge.action
         )
@@ -551,81 +619,6 @@ class Scanner:
         ), f"can't bypass challenge: {origin_response.url}"
 
         return challenge_response
-
-    async def detect_cloudflare_challenge(
-        self, response: aiohttp.ClientResponse
-    ) -> typing.Optional[CloudflareChallenge]:
-        # {"Cache-Control": "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0", "Connection": "close", "Content-Type": "application/zip", "Date": "Mon, 08 Jul 2024 02:01:26 GMT", "Last-Modified": "Monday, 08-Jul-2024 02:01:26 GMT", "Server": "imunify360-webshield/1.21", "Transfer-Encoding": "chunked", "cf-edge-cache": "no-cache"}
-
-        # if not (
-        #     response.headers.get("Cache-Control")
-        #     == "private, no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0"
-        #     and response.headers.get("cf-edge-cache") == "no-cache"
-        # ):
-        #     return
-
-        # {"Cache-Control": "no-cache, no-store, must-revalidate, max-age=0", "Connection": "keep-alive", "Content-Length": "1570", "Date": "Mon, 08 Jul 2024 16:10:57 GMT", "Server": "imunify360-webshield/1.21"}
-
-        # no-cache в заголовке Cache-Control содержится как правило на страницах, формирующихся динамически,
-        # а там всегда какой-то текст
-
-        # Так вроде же имеется заголовок `Transfer-Encoding: chunked`...
-        if "no-cache" not in response.headers.get("Cache-Control", "").split(
-            ", "
-        ):
-            return
-
-        text = await response.text()
-
-        # TODO: когда-нибудь сделать обход и капчи
-        # <title>Captcha</title>
-
-        """
-        <!doctype html>
-        <html lang="en">
-        <head>
-            <meta charset="utf-8">
-            <meta name="robots" content="noindex, nofollow">
-            <title>One moment, please...</title>
-            <!-- ... -->
-        <body>
-            <h1>Please wait while your request is being verified...</h1>
-            <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
-            <input type="hidden" id="wsidchk" name="wsidchk"/>
-            </form>
-            <script>
-            (function(){
-                var west=+((+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])),
-                    east=+((+!+[])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![])+(+![]+[])),
-                    x=function(){try{return !!window.addEventListener;}catch(e){return !!0;} },
-                    y=function(y,z){x() ? document.addEventListener('DOMContentLoaded',y,z) : document.attachEvent('onreadystatechange',y);};
-                y(function(){
-                    document.getElementById('wsidchk').value = west + east;
-                    document.getElementById('wsidchk-form').submit();
-                }, false);
-            })();
-            </script>
-        </body>
-        </html>
-        """
-
-        if "<title>One moment, please...</title>" not in text:
-            return
-
-        assert "west + east" in text
-
-        js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
-
-        return CloudflareChallenge(
-            action=re.search(r'action="([^"]+)', text).group(1),
-            method=re.search(r'method="([^"]+)"', text).group(1).lower(),
-            param_name=re.search(
-                r'<input type="hidden".+?name="([^"]+)',
-                text,
-            ).group(1),
-            var_east=js_vars["east"],
-            var_west=js_vars["west"],
-        )
 
     async def send_probe_request(
         self,
@@ -663,6 +656,8 @@ class Scanner:
     async def get_probe_result(
         self,
         response: aiohttp.ClientResponse,
+        text_content: str,
+        content: bytes,
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | Fail:
         rv = {}
@@ -681,25 +676,21 @@ class Scanner:
                 return FAIL
 
         if "match" in conf:
-            text = await response.text()
-            if not re.search(conf["match"], text):
+            if not re.search(conf["match"], text_content):
                 return FAIL
 
         if "not_match" in conf:
-            text = await response.text()
-            if re.search(conf["not_match"], text):
+            if re.search(conf["not_match"], text_content):
                 return FAIL
 
         if "extract" in conf:
-            text = await response.text()
-            if match := re.search(conf["extract"], text):
+            if match := re.search(conf["extract"], text_content):
                 rv |= {"match": match.group()}
             else:
                 return FAIL
 
         if "extract_all" in conf:
-            text = await response.text()
-            if items := re.findall(conf["extract_all"], text):
+            if items := re.findall(conf["extract_all"], text_content):
                 rv |= {"matches": items}
             else:
                 return FAIL
@@ -717,11 +708,11 @@ class Scanner:
             save_path.parent.mkdir(parents=True, exist_ok=True)
 
             with save_path.open("wb") as f:
-                if response._body is None:
-                    async for data in response.content.iter_chunked(2**16):
-                        f.write(data)
-                else:
-                    f.write(response._body)
+                f.write(content)
+
+                # читаем данные блоками по 64кб, если они остались в сокете
+                async for data in response.content.iter_chunked(1 << 16):
+                    f.write(data)
 
                 logger.debug(f"saved: {save_path}")
 
@@ -828,7 +819,7 @@ async def check_output(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
         stderr=asyncio.subprocess.PIPE,
         **kwargs,
     )
-    stdout_data, stderr_data = await p.communicate()
+    stdout_data, _ = await p.communicate()
     if p.returncode == 0:
         return stdout_data
 
@@ -857,12 +848,11 @@ class NameSpace(argparse.Namespace):
     timeout: int | float
     connect_timeout: int | float
     read_timeout: int | float
-    # proxy_timeout: int | float
     delay: int | float
     max_host_error: int
     proxy_url: str
     follow_redirects: bool
-    # force_https: bool
+    probe_read_length: int
     verbosity: int
 
 
@@ -936,12 +926,6 @@ def parse_args(
         type=float,
         default=10.0,
     )
-    # parser.add_argument(
-    #     "--proxy-timeout",
-    #     help="proxy connect timeout",
-    #     type=float,
-    #     default=10.0,
-    # )
     parser.add_argument(
         "-d",
         "--delay",
@@ -968,12 +952,12 @@ def parse_args(
         action=argparse.BooleanOptionalAction,
         default=False,
     )
-    # parser.add_argument(
-    #     "--force-https",
-    #     help="force use https",
-    #     action=argparse.BooleanOptionalAction,
-    #     default=False,
-    # )
+    parser.add_argument(
+        "--probe-read-length",
+        help="probe bytes read",
+        type=int,
+        default=1 << 18,
+    )
     parser.add_argument(
         "-v",
         "--verbosity",
@@ -1006,15 +990,6 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     logger.debug(f"config loaded: {config_file.name}")
     probes = conf["probes"]
 
-    # Пусть лучше падает
-    # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
-    # True
-    # if not all(set(item) >= ProbeDict.__required_keys__ for item in probes):
-    #     logger.error(
-    #         f"each probes element must have required keys: {', '.join(ProbeDict.__required_keys__)}"
-    #     )
-    #     return 1
-
     urls: list[str] = args.urls
 
     if not args.input.isatty():
@@ -1023,7 +998,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         )
 
     ignore_hosts: map[str] | None = (
-        filter(None, map(str.rstrip, args.ignore_hosts))
+        filter(None, filter(None, map(str.rstrip, args.ignore_hosts)))
         if args.ignore_hosts
         else None
     )
@@ -1035,12 +1010,12 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         connect_timeout=conf.get("connect_timeout", args.connect_timeout),
         read_timeout=conf.get("read_timeout", args.read_timeout),
         workers_num=conf.get("workers_num", args.workers_num),
-        delay=conf.get("delay", args.delay) / 1000,
+        delay=conf.get("delay", args.delay),
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
-        # force_https=conf.get("force_https", args.force_https),
+        probe_read_length=conf.get("probe_read_length", args.probe_read_length),
     )
 
     try:
