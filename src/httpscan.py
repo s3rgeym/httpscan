@@ -351,7 +351,7 @@ class Scanner:
         #         self.queue.put_nowait(None)
 
         workers = [
-            asyncio.create_task(self.worker(), name=f"Workwer #{i}")
+            asyncio.create_task(self.worker(), name=f"Workwer-{i + 1}")
             for i in range(self.workers_num)
         ]
 
