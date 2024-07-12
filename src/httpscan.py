@@ -289,44 +289,47 @@ class ConfigDict(typing.TypedDict):
     timeout: typing.NotRequired[int | float]
     connect_timeout: typing.NotRequired[int | float]
     read_timeout: typing.NotRequired[int | float]
-    # proxy_timeout: typing.NotRequired[int | float]
     max_host_error: typing.NotRequired[int]
     probes: typing.NotRequired[list[ProbeDict]]
     ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
+    follow_redirects: typing.NotRequired[bool]
+    skip_statuses: typing.NotRequired[list[str]]
+    probe_read_length: typing.NotRequired[str]
+
+
+"""
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex, nofollow">
+    <title>One moment, please...</title>
+    <!-- ... -->
+<body>
+    <h1>Please wait while your request is being verified...</h1>
+    <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
+    <input type="hidden" id="wsidchk" name="wsidchk"/>
+    </form>
+    <script>
+    (function(){
+        var west=+((+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])),
+            east=+((+!+[])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![])+(+![]+[])),
+            x=function(){try{return !!window.addEventListener;}catch(e){return !!0;} },
+            y=function(y,z){x() ? document.addEventListener('DOMContentLoaded',y,z) : document.attachEvent('onreadystatechange',y);};
+        y(function(){
+            document.getElementById('wsidchk').value = west + east;
+            document.getElementById('wsidchk-form').submit();
+        }, false);
+    })();
+    </script>
+</body>
+</html>
+"""
 
 
 @dataclasses.dataclass
 class CloudflareChallenge:
-    """
-    <!doctype html>
-    <html lang="en">
-    <head>
-        <meta charset="utf-8">
-        <meta name="robots" content="noindex, nofollow">
-        <title>One moment, please...</title>
-        <!-- ... -->
-    <body>
-        <h1>Please wait while your request is being verified...</h1>
-        <form id="wsidchk-form" style="display:none;" action="/z0f76a1d14fd21a8fb5fd0d03e0fdc3d3cedae52f" method="GET">
-        <input type="hidden" id="wsidchk" name="wsidchk"/>
-        </form>
-        <script>
-        (function(){
-            var west=+((+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])),
-                east=+((+!+[])+(+!+[]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![])+(+!+[]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+[])+(+!+[]+!![]+!![]+!![]+!![]+!![]+!![]+!![])+(+![]+[])),
-                x=function(){try{return !!window.addEventListener;}catch(e){return !!0;} },
-                y=function(y,z){x() ? document.addEventListener('DOMContentLoaded',y,z) : document.attachEvent('onreadystatechange',y);};
-            y(function(){
-                document.getElementById('wsidchk').value = west + east;
-                document.getElementById('wsidchk-form').submit();
-            }, false);
-        })();
-        </script>
-    </body>
-    </html>
-    """
-
     action: str
     method: str
     param: str
@@ -339,8 +342,6 @@ class CloudflareChallenge:
     ) -> CloudflareChallenge:
         assert "west + east" in text
 
-        js_vars = dict(re.findall(r"(west|east)=([^,]+)", text))
-
         return cls(
             action=re.search(r'action="([^"]+)', text).group(1),
             method=re.search(r'method="([^"]+)"', text).group(1).lower(),
@@ -348,8 +349,7 @@ class CloudflareChallenge:
                 r'<input type="hidden".+?name="([^"]+)',
                 text,
             ).group(1),
-            east=js_vars["east"],
-            west=js_vars["west"],
+            **dict(re.findall(r"(west|east)=([^,]+)", text)),
         )
 
 
@@ -858,6 +858,16 @@ def parse_statuses(args: list[str]) -> list[int]:
     return rv
 
 
+def parse_size(s: str) -> int:
+    """
+    >>> parse_size("512K")
+    524288
+    """
+    s = s.rstrip()
+    size, unit = [s[:-1], s[-1]] if s[-1].isalpha() else [s, ""]
+    return int(size) * 1024 ** ["", "k", "m", "g"].index(unit.lower())
+
+
 class NameSpace(argparse.Namespace):
     urls: list[str]
     input: typing.TextIO
@@ -982,9 +992,8 @@ def parse_args(
     )
     parser.add_argument(
         "--probe-read-length",
-        help="probe bytes read",
-        type=int,
-        default=1 << 18,
+        help="probe bytes read. supported units: K, M...",
+        default="512k",
     )
     parser.add_argument(
         "-v",
@@ -1033,8 +1042,6 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         else None
     )
 
-    skip_statuses = parse_statuses(args.skip_statuses)
-
     scanner = Scanner(
         probes=probes,
         output=args.output,
@@ -1047,8 +1054,12 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
-        skip_statuses=conf.get("skip_statuses", skip_statuses),
-        probe_read_length=conf.get("probe_read_length", args.probe_read_length),
+        skip_statuses=parse_statuses(
+            conf.get("skip_statuses", args.skip_statuses)
+        ),
+        probe_read_length=parse_size(
+            conf.get("probe_read_length", args.probe_read_length)
+        ),
     )
 
     try:
