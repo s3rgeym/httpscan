@@ -48,19 +48,21 @@ FAIL = Fail(0)
 class ANSI:
     CSI = "\x1b["
     RESET = f"{CSI}m"
+    BLACK = f"{CSI}30m"
     RED = f"{CSI}31m"
     GREEN = f"{CSI}32m"
     YELLOW = f"{CSI}33m"
     BLUE = f"{CSI}34m"
     PURPLE = f"{CSI}35m"
     CYAN = f"{CSI}36m"
+    WHITE = f"{CSI}37m"
 
 
 class ColorHandler(logging.StreamHandler):
     _level_colors = {
-        "DEBUG": ANSI.GREEN,
-        "INFO": ANSI.YELLOW,
-        "WARNING": ANSI.RED,
+        "DEBUG": ANSI.BLUE,
+        "INFO": ANSI.GREEN,
+        "WARNING": ANSI.PURPLE,
         "ERROR": ANSI.RED,
         "CRITICAL": ANSI.RED,
     }
@@ -530,7 +532,12 @@ class Scanner:
                         probe,
                     )
                 ) is FAIL:
+                    logger.warning(f"failed probe {probe['name']!r} for {url}")
                     return
+
+                logger.info(
+                    f"successed probe {probe['name']!r} for {url} {ANSI.GREEN}"
+                )
 
                 self.output_json(
                     remove_empty_from_dict(
@@ -551,7 +558,7 @@ class Scanner:
                     )
                 )
             except Exception as ex:
-                logger.warning(ex)
+                logger.error(ex)
                 self.host_error[host] += 1
 
     def is_ignored_host(self, hostname: str) -> bool:
