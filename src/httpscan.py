@@ -70,7 +70,7 @@ class ColorHandler(logging.StreamHandler):
         return f"{self._level_colors[record.levelname]}{message}{ANSI.RESET}"
 
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 # stderr = functools.partial(print, file=sys.stderr, flush=True)
 
 
@@ -335,62 +335,84 @@ class Scanner:
         self.host_error = collections.Counter()
         self.next_request = 0
 
-        async with asyncio.TaskGroup() as tg:
-            for _ in range(self.workers_num):
-                tg.create_task(self.worker())
+        # Генерирует сранные GroupException, которые сложно перехватывать выше
+        # по стеку вызова
 
-            await self.produce(urls)
-            await self.queue.join()
+        # async with asyncio.TaskGroup() as tg:
+        #     for _ in range(self.workers_num):
+        #         tg.create_task(self.worker())
 
-            log.debug("stop workers")
+        #     await self.produce(urls)
+        #     await self.queue.join()
 
-            for _ in range(self.workers_num):
-                self.queue.put_nowait(None)
+        #     logger.debug("stop workers")
+
+        #     for _ in range(self.workers_num):
+        #         self.queue.put_nowait(None)
+
+        workers = [
+            asyncio.create_task(self.worker(), name=f"Workwer #{i}")
+            for i in range(self.workers_num)
+        ]
+
+        await self.produce(urls)
+        await self.queue.join()
+
+        for worker in workers:
+            worker.cancel()
 
     async def produce(self, urls: typing.Iterable[str]) -> None:
-        for url in urls:
-            # hostname всегда в нижнем регистре
+        for url in map(normalize_url, urls):
             try:
+                # hostname всегда в нижнем регистре
                 if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
-                    log.debug(f"skip ignored host url: {url}")
+                    logger.debug(f"skip ignored host url: {url}")
                     continue
 
                 await self.queue.put(url)
-            except BaseException as ex:
-                log.exception(ex)
+            except Exception as ex:
+                logger.exception(ex)
 
     async def worker(self) -> None:
         task_name = asyncio.current_task().get_name()
-        log.debug("task started: %s", task_name)
+        logger.debug("started: %s", task_name)
 
-        while True:
-            try:
+        # без этой строки отработает как надо, но не выведет сообщения о
+        # завершении
+        with contextlib.suppress(asyncio.CancelledError):
+            while True:
                 url = await self.queue.get()
 
-                if url is None:
-                    break
+                try:
+                    user_agent = await self.rand_user_agent()
+                    logger.debug(f"user agent for {url}: {user_agent}")
 
-                user_agent = await self.rand_user_agent()
-                log.debug(f"user agent for {url}: {user_agent}")
+                    # Для каждого url используем новую сессию из-за того, что сессии
+                    # со временем начинают тормозить
+                    async with self.get_session(
+                        user_agent=user_agent
+                    ) as session:
+                        probe_tasks = []
+                        for probe in self.probes:
+                            for path in expand(probe["path"]):
+                                probe_tasks.append(
+                                    self.make_probe(session, url, path, probe)
+                                )
 
-                # Для каждого url используем новую сессию из-за того, что сессии
-                # со временем начинают тормозить
-                async with self.get_session(user_agent=user_agent) as session:
-                    probe_tasks = []
-                    for probe in self.probes:
-                        for path in expand(probe["path"]):
-                            probe_tasks.append(
-                                self.make_probe(session, url, path, probe)
-                            )
+                        logger.debug(
+                            f"probe tasks for {url}: {len(probe_tasks)}"
+                        )
+                        await asyncio.gather(
+                            *probe_tasks, return_exceptions=True
+                        )
+                # ! asyncio.exceptions.CancelledError наследуется напрямую от
+                # BaseException, поэтому нужно перехватывать Exception
+                except Exception as ex:
+                    logger.exception(ex)
+                finally:
+                    self.queue.task_done()
 
-                    log.debug(f"probe tasks for {url}: {len(probe_tasks)}")
-                    await asyncio.gather(*probe_tasks, return_exceptions=True)
-            except BaseException as ex:
-                log.exception(ex)
-            finally:
-                self.queue.task_done()
-
-        log.debug("task finished: %s", task_name)
+        logger.debug("finished: %s", task_name)
 
     async def make_probe(
         self,
@@ -405,7 +427,7 @@ class Scanner:
                 host = urllib.parse.urlparse(base_url).netloc
 
                 if self.host_error[host] >= self.max_host_error:
-                    log.warning(f"max host error exceeded: {host}")
+                    logger.warning(f"max host error exceeded: {host}")
                     return
 
                 url = urllib.parse.urljoin(base_url, path)
@@ -418,7 +440,7 @@ class Scanner:
                 if challenge := await self.detect_cloudflare_challenge(
                     response
                 ):
-                    log.debug(f"cloudflare challenge detected: {url}")
+                    logger.debug(f"cloudflare challenge detected: {url}")
 
                     # разгадываем скобки и возвращаем запрашиваемую страницу
                     response = await self.bypass_cloudflare_challenge(
@@ -452,7 +474,7 @@ class Scanner:
                     )
                 )
             except Exception as ex:
-                log.warning(ex)
+                logger.warning(ex)
                 self.host_error[host] += 1
 
     def is_ignored_host(self, hostname: str) -> bool:
@@ -475,7 +497,7 @@ class Scanner:
                 self.lock
             ):  # блокируем асинхронное выполнение остальных заданий
                 if (dt := self.next_request - time.monotonic()) > 0:
-                    # log.debug(f"sleep: {dt:.3f}")
+                    # logger.debug(f"sleep: {dt:.3f}")
                     await asyncio.sleep(dt)
 
                 self.next_request = time.monotonic() + self.delay
@@ -506,7 +528,7 @@ class Scanner:
         assert challenge.method == "get", f"unexptected {challenge.method = !r}"
         solution = await self.solve_cloudflare_challenge(challenge)
 
-        log.debug(f"{solution = }")
+        logger.debug(f"{solution = }")
 
         payload = {challenge.param_name: solution}
         challenge_endpoint = urllib.parse.urljoin(
@@ -616,7 +638,7 @@ class Scanner:
 
         method = probe.get("method", "GET").upper()
 
-        log.debug(f"send request: {method} {url}")
+        logger.debug(f"send request: {method} {url}")
 
         response = await session.request(
             method,
@@ -629,7 +651,7 @@ class Scanner:
             allow_redirects=self.follow_redirects,
         )
 
-        log.debug(
+        logger.debug(
             f"got response: {response.status} {response.method} {response.url}"
         )
 
@@ -701,12 +723,12 @@ class Scanner:
                 else:
                     f.write(response._body)
 
-                log.debug(f"saved: {save_path}")
+                logger.debug(f"saved: {save_path}")
 
             stat = save_path.stat()
 
             if stat.st_size == 0:
-                log.warning(f"unlink empty file: {save_path}")
+                logger.warning(f"unlink empty file: {save_path}")
                 save_path.unlink()
                 return FAIL
 
@@ -723,7 +745,7 @@ class Scanner:
 
     async def get_user_agents(self) -> list[str]:
         if not hasattr(self, "_user_agents"):
-            log.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
+            logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
             async with self.get_session() as session:
                 r = await session.get(USER_AGENTS_ENDPOINT)
                 json_data = await r.json()
@@ -733,9 +755,9 @@ class Scanner:
 
     async def check_proxy(self) -> bool:
         client_ip = await self.get_ip(use_proxy=False)
-        log.debug(f"client ip: {mask_ip(client_ip)}")
+        logger.debug(f"client ip: {mask_ip(client_ip)}")
         proxy_ip = await self.get_ip()
-        log.debug(f"proxy ip: {mask_ip(proxy_ip)}")
+        logger.debug(f"proxy ip: {mask_ip(proxy_ip)}")
         return client_ip != proxy_ip
 
     async def get_ip(self, **kw: typing.Any) -> str:
@@ -783,10 +805,14 @@ class Scanner:
             yield session
 
 
+def normalize_url(u: str) -> str:
+    return u if "://" in u else f"https://{u}"
+
+
 def mask_ip(addr: str, ch: str = "*") -> str:
     """маскирует все сегменты адреса за исключением последнего
 
-    >>> mask_ip('192.168.0.104')
+    >>> mask_ip("192.168.0.104")
     '***.***.*.104'"""
     return re.sub(r"[^.](?![^.]*$)", ch, addr)
 
@@ -805,10 +831,6 @@ async def check_output(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
     stdout_data, stderr_data = await p.communicate()
     if p.returncode == 0:
         return stdout_data
-
-
-def normalize_url(u: str) -> str:
-    return u if "://" in u else f"https://{u}"
 
 
 def find_config() -> None | typing.TextIO:
@@ -840,6 +862,7 @@ class NameSpace(argparse.Namespace):
     max_host_error: int
     proxy_url: str
     follow_redirects: bool
+    # force_https: bool
     verbosity: int
 
 
@@ -945,6 +968,12 @@ def parse_args(
         action=argparse.BooleanOptionalAction,
         default=False,
     )
+    # parser.add_argument(
+    #     "--force-https",
+    #     help="force use https",
+    #     action=argparse.BooleanOptionalAction,
+    #     default=False,
+    # )
     parser.add_argument(
         "-v",
         "--verbosity",
@@ -961,39 +990,40 @@ def parse_args(
 def main(argv: typing.Sequence[str] | None = None) -> None | int:
     _, args = parse_args(argv=argv)
 
-    lvl = max(logging.DEBUG, logging.WARNING - logging.DEBUG * args.verbosity)
-    log.setLevel(lvl)
-    log.addHandler(ColorHandler())
+    logger.setLevel(
+        max(logging.DEBUG, logging.WARNING - logging.DEBUG * args.verbosity)
+    )
+    logger.addHandler(ColorHandler())
 
-    log.debug("debugger: %s", ["off", "on"][DEBUGGER_ON])
+    logger.debug("debugger: %s", ["off", "on"][DEBUGGER_ON])
 
     if (config_file := args.config or find_config()) is None:
-        log.error("config not found")
+        logger.error("config not found")
         return 1
 
     conf: ConfigDict = yaml.safe_load(config_file)
     config_file.close()
-    log.debug(f"config loaded: {config_file.name}")
+    logger.debug(f"config loaded: {config_file.name}")
     probes = conf["probes"]
+
+    # Пусть лучше падает
     # > {'baz', 'foo', 'bar', 'quix'} > {'bar', 'foo'}
     # True
-    if not all(set(item) >= ProbeDict.__required_keys__ for item in probes):
-        log.error(
-            f"each probes element must have required keys: {', '.join(ProbeDict.__required_keys__)}"
-        )
-        return 1
+    # if not all(set(item) >= ProbeDict.__required_keys__ for item in probes):
+    #     logger.error(
+    #         f"each probes element must have required keys: {', '.join(ProbeDict.__required_keys__)}"
+    #     )
+    #     return 1
 
     urls: list[str] = args.urls
 
     if not args.input.isatty():
         urls: itertools.chain[str] = itertools.chain(
-            urls, map(str.strip, args.input)
+            urls, filter(None, map(str.rstrip, args.input))
         )
 
-    urls: map[str] = map(normalize_url, filter(None, urls))
-
     ignore_hosts: map[str] | None = (
-        filter(None, map(str.strip, args.ignore_hosts))
+        filter(None, map(str.rstrip, args.ignore_hosts))
         if args.ignore_hosts
         else None
     )
@@ -1010,18 +1040,19 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
+        # force_https=conf.get("force_https", args.force_https),
     )
 
     try:
         asyncio.run(scanner.scan(urls))
     except KeyboardInterrupt:
-        log.warning("execution interrupted by user")
+        logger.error("execution interrupted by user")
         return 2
     except Exception as ex:
-        log.critical(ex, exc_info=True)
+        logger.critical(ex, exc_info=True)
         return 1
     else:
-        log.info("finished!")
+        logger.info("finished!")
 
 
 if __name__ == "__main__":
