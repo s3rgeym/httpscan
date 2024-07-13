@@ -519,6 +519,7 @@ class Scanner:
                         response.charset or "ascii", errors="replace"
                     )
 
+                    # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
                     if "<title>One moment, please...</title>" in text_content:
                         logger.debug(f"cloudflare challenge detected: {url}")
 
