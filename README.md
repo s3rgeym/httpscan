@@ -26,10 +26,11 @@ $ httpscan -i urls.txt -o results.json -vv --proxy 'socks5://localhost:1080'
 $ httpscan -h
 usage: httpscan.py [-h] [-u URLS [URLS ...]] [-i INPUT] [-o OUTPUT] [-c CONFIG]
                    [-s SAVE_DIR] [-w WORKERS_NUM] [-t TIMEOUT] [-r READ_TIMEOUT]
-                   [-C CONNECT_TIMEOUT] [-d DELAY] [-igh IGNORE_HOSTS]
+                   [-C CONNECT_TIMEOUT] [-d DELAY] [--ignore-hosts IGNORE_HOSTS]
                    [-maxhe MAX_HOST_ERROR] [-f | --follow-redirects | --no-follow-redirects]
-                   [-xs SKIP_STATUSES [SKIP_STATUSES ...]] [--proxy-url PROXY_URL]
-                   [-pl PROBE_READ_LENGTH] [-v] [--version]
+                   [--skip-statuses SKIP_STATUSES [SKIP_STATUSES ...]]
+                   [--proxy-url PROXY_URL] [--probe-read-length PROBE_READ_LENGTH] [-v]
+                   [--version]
 
 configurable http scanner
 
@@ -55,19 +56,19 @@ options:
                         socket read timeout sec (default: 10.0)
   -d DELAY, --delay DELAY
                         delay in milliseconds (default: 50)
-  -igh IGNORE_HOSTS, --ignore-hosts IGNORE_HOSTS, --ignore IGNORE_HOSTS
+  --ignore-hosts IGNORE_HOSTS, --ignore IGNORE_HOSTS
                         ignore hosts file (default: None)
   -maxhe MAX_HOST_ERROR, --max-host-error MAX_HOST_ERROR
                         maximum number of errors for a host after which other paths will be
                         skipped (default: 10)
   -f, --follow-redirects, --no-follow-redirects
                         follow redirects (default: False)
-  -xs SKIP_STATUSES [SKIP_STATUSES ...], --skip-statuses SKIP_STATUSES [SKIP_STATUSES ...]
+  --skip-statuses SKIP_STATUSES [SKIP_STATUSES ...], --skip-status SKIP_STATUSES [SKIP_STATUSES ...]
                         always skip status codes (default: [])
   --proxy-url PROXY_URL, --proxy PROXY_URL
                         proxy url, e.g. socks5://localhost:1080. Also you can set PROXY_URL
                         environmemt variable (default: None)
-  -pl PROBE_READ_LENGTH, --probe-read-length PROBE_READ_LENGTH
+  --probe-read-length PROBE_READ_LENGTH, --probe-read PROBE_READ_LENGTH
                         probe read length; supported units: K, M (default: 128k)
   -v, --verbosity       be more verbosity (default: 0)
   --version             show program's version number and exit
