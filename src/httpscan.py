@@ -296,6 +296,7 @@ class ConfigDict(typing.TypedDict):
     ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
     follow_redirects: typing.NotRequired[bool]
+    force_https: typing.NotRequired[bool]
     skip_statuses: typing.NotRequired[list[str]]
     save_dir: typing.NotRequired[os.PathLike]
     probe_read_length: typing.NotRequired[str]
@@ -373,6 +374,7 @@ class Scanner:
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
+    force_https: bool = False
     save_dir: pathlib.Path = OUTPUT_DIR
     skip_statuses: typing.Sequence[int] = dataclasses.field(
         default_factory=list
@@ -429,10 +431,15 @@ class Scanner:
     async def produce(self, urls: typing.Iterable[str]) -> None:
         for url in map(normalize_url, urls):
             try:
+                url_sp = urllib.parse.urlsplit(url)
                 # hostname всегда в нижнем регистре
-                if self.is_ignored_host(urllib.parse.urlsplit(url).hostname):
-                    logger.debug(f"skip ignored host url: {url}")
+                if self.is_ignored_host(url_sp.hostname):
+                    logger.debug(f"skip ignored host: {url_sp.hostname}")
                     continue
+
+                # scheme тоже в нижний переводится
+                if url_sp.scheme == "http" and self.force_https:
+                    url = "https" + url[4:]
 
                 await self.queue.put(url)
             except Exception as ex:
@@ -745,14 +752,14 @@ class Scanner:
                 async for data in response.content.iter_chunked(1 << 16):
                     f.write(data)
 
-                logger.info(f"file saved: {save_path}")
+            logger.info(f"file saved: {save_path}")
 
             stat = save_path.stat()
 
             if stat.st_size == 0:
-                logger.warning(f"unlink empty file: {save_path}")
-                save_path.unlink()
-                return FAIL
+                logger.warning(f"empty file: {save_path}")
+                # save_path.unlink()
+                # return FAIL
 
             rv |= {
                 "saved_bytes": stat.st_size,
@@ -907,6 +914,7 @@ class NameSpace(argparse.Namespace):
     delay: int | float
     max_host_error: int
     follow_redirects: bool
+    force_https: bool
     skip_statuses: list[str]
     proxy_url: str
     probe_read_length: int
@@ -1011,6 +1019,12 @@ def parse_args(
         default=False,
     )
     parser.add_argument(
+        "--force-https",
+        help="force replace the scheme from http to https",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
         "--skip-statuses",
         "--skip-status",
         nargs="+",
@@ -1060,19 +1074,13 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
 
     logger.debug(f"config loaded: {config_file.name}")
 
-    probes = conf["probes"]
-
     urls = args.urls
 
     if not args.input.isatty():
         urls = itertools.chain(urls, filter_empty_lines(args.input))
 
-    ignore_hosts = (
-        filter_empty_lines(args.ignore_hosts) if args.ignore_hosts else []
-    )
-
     scanner = Scanner(
-        probes=probes,
+        probes=conf["probes"],
         output=args.output,
         timeout=conf.get("timeout", args.timeout),
         connect_timeout=conf.get("connect_timeout", args.connect_timeout),
@@ -1080,10 +1088,14 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         workers_num=conf.get("workers_num", args.workers_num),
         delay=conf.get("delay", args.delay),
         save_dir=pathlib.Path(conf.get("save_dir", args.save_dir)),
-        ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
+        ignore_hosts=conf.get(
+            "ignore_hosts",
+            filter_empty_lines(args.ignore_hosts) if args.ignore_hosts else [],
+        ),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         follow_redirects=conf.get("follow_redirects", args.follow_redirects),
+        force_https=conf.get("force_https", args.force_https),
         skip_statuses=parse_statuses(
             conf.get("skip_statuses", args.skip_statuses)
         ),
