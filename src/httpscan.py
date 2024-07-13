@@ -873,7 +873,7 @@ def parse_statuses(args: list[str]) -> list[int]:
     rv = []
     for arg in args:
         try:
-            first, last = map(int, arg.split("-", 1))
+            first, last = sorted(map(int, arg.split("-", 1)))
             rv.extend(range(first, last + 1))
         except ValueError:
             rv.append(int(arg))
