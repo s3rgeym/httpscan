@@ -544,10 +544,10 @@ class Scanner:
                         probe,
                     )
                 ) is FAIL:
-                    logger.warning(f"failed probe {probe['name']!r} for {url}")
+                    logger.warning(f"failed probe {probe['name']!r}: {url}")
                     return
 
-                logger.info(f"successed probe {probe['name']!r} for {url}")
+                logger.info(f"successed probe {probe['name']!r}: {url}")
 
                 self.output_json(
                     remove_empty_from_dict(
