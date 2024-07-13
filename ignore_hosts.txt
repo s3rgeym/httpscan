@@ -1,2 +1,8 @@
 GOOGLE.COM
 *.GOOGLE.COM
+www.facebook.com
+www.instagram.com
+twitter.com
+x.com
+www.linkedin.com
+t.me
