@@ -283,7 +283,7 @@ class ProbeDict(typing.TypedDict):
     extract_all: typing.NotRequired[str]
     # status_code >= 200 && status_code < 300
     condition: typing.NotRequired[str]
-    save_to: typing.NotRequired[os.PathLike]
+    save_file: typing.NotRequired[bool]
 
 
 class ConfigDict(typing.TypedDict):
@@ -297,6 +297,7 @@ class ConfigDict(typing.TypedDict):
     proxy_url: typing.NotRequired[str]
     follow_redirects: typing.NotRequired[bool]
     skip_statuses: typing.NotRequired[list[str]]
+    save_dir: typing.NotRequired[os.PathLike]
     probe_read_length: typing.NotRequired[str]
 
 
@@ -355,6 +356,9 @@ class CloudflareChallenge:
         )
 
 
+OUTPUT_DIR = pathlib.Path.cwd() / "output"
+
+
 @dataclasses.dataclass
 class Scanner:
     probes: list[ProbeDict]
@@ -369,6 +373,7 @@ class Scanner:
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
     follow_redirects: bool = False
+    save_dir: pathlib.Path = OUTPUT_DIR
     skip_statuses: typing.Sequence[int] = dataclasses.field(
         default_factory=list
     )
@@ -720,9 +725,9 @@ class Scanner:
             else:
                 return FAIL
 
-        if "save_to" in conf:
+        if conf.get("save_file"):
             save_path = (
-                pathlib.Path(conf["save_to"])
+                self.save_dir
                 / response.host
                 / (
                     response.url.path[1:]
@@ -739,7 +744,7 @@ class Scanner:
                 async for data in response.content.iter_chunked(1 << 16):
                     f.write(data)
 
-                logger.debug(f"saved: {save_path}")
+                logger.info(f"file saved: {save_path}")
 
             stat = save_path.stat()
 
@@ -904,6 +909,7 @@ class NameSpace(argparse.Namespace):
     skip_statuses: list[str]
     proxy_url: str
     probe_read_length: int
+    save_dir: str
     verbosity: int
 
 
@@ -940,15 +946,14 @@ def parse_args(
     parser.add_argument(
         "-c",
         "--config",
-        help="config file in YAML format",
+        help="custom config file",
         type=argparse.FileType(),
     )
     parser.add_argument(
-        "-igh",
-        "--ignore-hosts",
-        "--ignore",
-        help="ignore hosts file",
-        type=argparse.FileType(),
+        "-s",
+        "--save-dir",
+        help="directory to save files",
+        default="./output",
     )
     parser.add_argument(
         "-w",
@@ -985,6 +990,13 @@ def parse_args(
         default=50,
     )
     parser.add_argument(
+        "-igh",
+        "--ignore-hosts",
+        "--ignore",
+        help="ignore hosts file",
+        type=argparse.FileType(),
+    )
+    parser.add_argument(
         "-maxhe",
         "--max-host-error",
         help="maximum number of errors for a host after which other paths will be skipped",
@@ -999,7 +1011,7 @@ def parse_args(
         default=False,
     )
     parser.add_argument(
-        "-ss",
+        "-xs",
         "--skip-statuses",
         nargs="+",
         default=[],
@@ -1008,9 +1020,10 @@ def parse_args(
     parser.add_argument(
         "--proxy-url",
         "--proxy",
-        help="proxy url, e.g. socks5://localhost:1080",
+        help="proxy url, e.g. socks5://localhost:1080. Also you can set PROXY_URL environmemt variable",
     )
     parser.add_argument(
+        "-pl",
         "--probe-read-length",
         help="probe read length; supported units: K, M",
         default="128k",
@@ -1066,6 +1079,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         read_timeout=conf.get("read_timeout", args.read_timeout),
         workers_num=conf.get("workers_num", args.workers_num),
         delay=conf.get("delay", args.delay),
+        save_dir=pathlib.Path(conf.get("save_dir", args.save_dir)),
         ignore_hosts=conf.get("ignore_hosts", ignore_hosts),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
