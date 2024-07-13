@@ -991,7 +991,6 @@ def parse_args(
         default=50,
     )
     parser.add_argument(
-        "-igh",
         "--ignore-hosts",
         "--ignore",
         help="ignore hosts file",
@@ -1012,8 +1011,8 @@ def parse_args(
         default=False,
     )
     parser.add_argument(
-        "-xs",
         "--skip-statuses",
+        "--skip-status",
         nargs="+",
         default=[],
         help="always skip status codes",
@@ -1024,8 +1023,8 @@ def parse_args(
         help="proxy url, e.g. socks5://localhost:1080. Also you can set PROXY_URL environmemt variable",
     )
     parser.add_argument(
-        "-pl",
         "--probe-read-length",
+        "--probe-read",
         help="probe read length; supported units: K, M",
         default="128k",
     )
