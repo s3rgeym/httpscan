@@ -499,7 +499,6 @@ class Scanner:
                     session, url, headers, probe
                 )
 
-                # Может зациклить
                 for tries in itertools.count(1):
                     if response.status in self.skip_statuses:
                         logger.warning(
