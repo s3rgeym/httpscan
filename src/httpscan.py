@@ -1014,7 +1014,7 @@ def parse_args(
     parser.add_argument(
         "--probe-read-length",
         help="probe read length; supported units: K, M",
-        default="512k",
+        default="128k",
     )
     parser.add_argument(
         "-v",
