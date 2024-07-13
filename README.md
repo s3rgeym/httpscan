@@ -24,11 +24,12 @@ pipx install git+https://github.com/s3rgeym/httpscan.git
 $ httpscan -i urls.txt -o results.json -vv --proxy 'socks5://localhost:1080'
 
 $ httpscan -h
-usage: httpscan [-h] [-u URLS [URLS ...]] [-i INPUT] [-o OUTPUT] [-c CONFIG] [-igh IGNORE_HOSTS]
-                [-w WORKERS_NUM] [-t TIMEOUT] [-r READ_TIMEOUT] [-C CONNECT_TIMEOUT] [-d DELAY]
-                [-maxhe MAX_HOST_ERROR] [-f | --follow-redirects | --no-follow-redirects]
-                [-ss SKIP_STATUSES [SKIP_STATUSES ...]] [--proxy-url PROXY_URL]
-                [--probe-read-length PROBE_READ_LENGTH] [-v] [--version]
+usage: httpscan.py [-h] [-u URLS [URLS ...]] [-i INPUT] [-o OUTPUT] [-c CONFIG]
+                   [-s SAVE_DIR] [-w WORKERS_NUM] [-t TIMEOUT] [-r READ_TIMEOUT]
+                   [-C CONNECT_TIMEOUT] [-d DELAY] [-igh IGNORE_HOSTS]
+                   [-maxhe MAX_HOST_ERROR] [-f | --follow-redirects | --no-follow-redirects]
+                   [-xs SKIP_STATUSES [SKIP_STATUSES ...]] [--proxy-url PROXY_URL]
+                   [-pl PROBE_READ_LENGTH] [-v] [--version]
 
 configurable http scanner
 
@@ -41,9 +42,9 @@ options:
   -o OUTPUT, --output OUTPUT
                         output file to results in JSONL (default: -)
   -c CONFIG, --config CONFIG
-                        config file in YAML format (default: None)
-  -igh IGNORE_HOSTS, --ignore-hosts IGNORE_HOSTS, --ignore IGNORE_HOSTS
-                        ignore hosts file (default: None)
+                        custom config file (default: None)
+  -s SAVE_DIR, --save-dir SAVE_DIR
+                        directory to save files (default: ./output)
   -w WORKERS_NUM, --workers-num WORKERS_NUM, --workers WORKERS_NUM
                         number of workers (default: 20)
   -t TIMEOUT, --timeout TIMEOUT
@@ -54,16 +55,19 @@ options:
                         socket read timeout sec (default: 10.0)
   -d DELAY, --delay DELAY
                         delay in milliseconds (default: 50)
+  -igh IGNORE_HOSTS, --ignore-hosts IGNORE_HOSTS, --ignore IGNORE_HOSTS
+                        ignore hosts file (default: None)
   -maxhe MAX_HOST_ERROR, --max-host-error MAX_HOST_ERROR
                         maximum number of errors for a host after which other paths will be
                         skipped (default: 10)
   -f, --follow-redirects, --no-follow-redirects
                         follow redirects (default: False)
-  -ss SKIP_STATUSES [SKIP_STATUSES ...], --skip-statuses SKIP_STATUSES [SKIP_STATUSES ...]
+  -xs SKIP_STATUSES [SKIP_STATUSES ...], --skip-statuses SKIP_STATUSES [SKIP_STATUSES ...]
                         always skip status codes (default: [])
   --proxy-url PROXY_URL, --proxy PROXY_URL
-                        proxy url, e.g. socks5://localhost:1080 (default: None)
-  --probe-read-length PROBE_READ_LENGTH
+                        proxy url, e.g. socks5://localhost:1080. Also you can set PROXY_URL
+                        environmemt variable (default: None)
+  -pl PROBE_READ_LENGTH, --probe-read-length PROBE_READ_LENGTH
                         probe read length; supported units: K, M (default: 128k)
   -v, --verbosity       be more verbosity (default: 0)
   --version             show program's version number and exit
@@ -84,7 +88,7 @@ probes:
   match: INSERT INTO
   name: database dump
   path: /{db,dump,database,backup}.sql
-  save_to: output
+  save_file: true
 ```
 
 В репозитории имеется [sample.httpscan.yml](./sample.httpscan.yml) (можно его переместить в `~/.config/httpscan.yml`).
@@ -94,7 +98,7 @@ probes:
 * `method` задает HTTP-метод; `params` служит для передачи параметров **QUERY STRING**, `data` — параметры передаваемые с помощью `application/x-www-form-urlencoded`, `json`..., `cookies`..., `headers`...
 * `condition` позволяет отфильтровать результаты. Имеется встроенный движок выражений. Поддерживаются операторы `==`, `!=`, `<`, `<=`, `>`, `>=`, `!` или `NOT`, `AND` или `&&`, `OR` или `||`. Все регистронезависимы. Их можно группировать с помощью круглых скобок. Доступны переменные: `status_code`, `content_length`, `content_type`... Например, `status_code == 200 && content_type == 'application/json'`. Заметьте, что строки должны быть в кавычках...
 * `match`, `not_match` проверяют на соответсвие шаблону регулярного выражения совместимого с Python ответ сервера. `extract` и `extract_all` позволяют извлечь содержимое, если оно соответствует шаблону. Так как тело ответа может быть гигантским, то из сокета для пробы по умолчанию читаются первые 128 килобайт данных. Для html-страницы этого достаточно, а всякие архивы можно проверять на отсутствие html-тегов.
-* `save_to` ­— сохраняет файл в случае успеха.
+* `save_file: true` ­— сохраняет файл в случае успеха по умолчанию в каталог `./output/%hostname%`.
 
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
