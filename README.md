@@ -21,13 +21,6 @@ pipx install git+https://github.com/s3rgeym/httpscan.git
 Использование:
 
 ```bash
-# -i urls.txt                       - загрузить список ссылок для сканирования
-#                                     из файла, где каждая ссылка с новой строки
-# -o results.json                   - файл с результатами сканирования, где
-#                                     результаты в виде JSON-объектов - каждый с
-#                                     новой строки
-# -vv                               - вывод отладочных сообщений
-# --proxy 'socks5://localhost:1080' - использовать прокси для сканирования
 $ httpscan -i urls.txt -o results.json -vv --proxy 'socks5://localhost:1080'
 
 $ httpscan -h
