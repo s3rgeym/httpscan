@@ -544,8 +544,8 @@ class Scanner:
                 if (
                     result := await self.get_probe_result(
                         response,
-                        content,
                         text_content,
+                        content,
                         probe,
                     )
                 ) is FAIL:
