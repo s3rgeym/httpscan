@@ -374,6 +374,8 @@ class Scanner:
     )
     # читаем и проверяем только первые 256kb
     probe_read_length: int = 1 << 18
+    # TODO: добавить флаг?
+    bypass_cloudflare_tries: int = 1
 
     def __post_init__(self) -> None:
         self.lock = asyncio.Lock()
@@ -497,32 +499,42 @@ class Scanner:
                     session, url, headers, probe
                 )
 
-                if response.status in self.skip_statuses:
-                    logger.warning(
-                        f"skip status: {response.status} {response.url}"
+                # Может зациклить
+                for tries in itertools.count(1):
+                    if response.status in self.skip_statuses:
+                        logger.warning(
+                            f"skip status: {response.status} {response.url}"
+                        )
+                        return
+
+                    content: bytes = await response.content.read(
+                        self.probe_read_length
                     )
-                    return
 
-                content: bytes = await response.content.read(
-                    self.probe_read_length
-                )
-
-                text_content: str = content.decode(
-                    response.charset or "utf-8", errors="replace"
-                )
-
-                if "<title>One moment, please...</title>" in text_content:
-                    logger.debug(f"cloudflare challenge detected: {url}")
-
-                    challenge = CloudflareChallenge.from_text(text_content)
-
-                    # разгадываем скобки и возвращаем запрашиваемую страницу
-                    response = await self.bypass_cloudflare_challenge(
-                        session,
-                        challenge,
-                        response,
-                        headers,
+                    text_content: str = content.decode(
+                        response.charset or "ascii", errors="replace"
                     )
+
+                    if "<title>One moment, please...</title>" in text_content:
+                        logger.debug(f"cloudflare challenge detected: {url}")
+
+                        assert (
+                            tries > self.bypass_cloudflare_tries
+                        ), f"maximum tries to bypass cloudflare exceeded: {self.bypass_cloudflare_tries}"
+
+                        challenge = CloudflareChallenge.from_text(text_content)
+
+                        # разгадываем скобки и возвращаем запрашиваемую страницу
+                        response = await self.bypass_cloudflare_challenge(
+                            session,
+                            challenge,
+                            response,
+                            headers,
+                        )
+
+                        continue
+
+                    break
 
                 if (
                     result := await self.get_probe_result(
@@ -535,9 +547,7 @@ class Scanner:
                     logger.warning(f"failed probe {probe['name']!r} for {url}")
                     return
 
-                logger.info(
-                    f"successed probe {probe['name']!r} for {url} {ANSI.GREEN}"
-                )
+                logger.info(f"successed probe {probe['name']!r} for {url}")
 
                 self.output_json(
                     remove_empty_from_dict(
