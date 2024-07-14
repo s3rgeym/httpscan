@@ -481,7 +481,6 @@ class Worker:
         task_name = asyncio.current_task().get_name()
         logger.debug("started: %s", task_name)
 
-        self.next_request = 0
         # без этой строки отработает как надо, но не выведет сообщения о
         # завершении
         with contextlib.suppress(asyncio.CancelledError):
@@ -494,6 +493,7 @@ class Worker:
                 try:
                     user_agent = self.rand_ua()
                     logger.debug(f"user agent for {url}: {user_agent}")
+                    self.next_request = 0
 
                     # Для каждого url используем новую сессию из-за того, что сессии
                     # со временем начинают тормозить
@@ -629,7 +629,9 @@ class Worker:
                 self.lock
             ):  # блокируем асинхронное выполнение остальных заданий
                 if (dt := self.next_request - time.monotonic()) > 0:
-                    # logger.debug(f"sleep: {dt:.3f}")
+                    logger.debug(
+                        f"{asyncio.current_task().get_name()} sleep {dt:.3f}s"
+                    )
                     await asyncio.sleep(dt)
 
                 self.next_request = (
@@ -1027,7 +1029,7 @@ def parse_args(
         "--delay",
         help="host delay before probe request in milliseconds",
         type=int,
-        default=120,
+        default=334,
     )
     parser.add_argument(
         "--ignore-hosts",
