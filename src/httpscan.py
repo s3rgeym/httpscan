@@ -80,11 +80,11 @@ logger = logging.getLogger(__name__)
 
 def parse_range(s: str) -> list[str | int]:
     range_parts = s.split("..", 1)
-    is_num_range = all(x.isdigit() for x in range_parts)
-    first, last = map((ord, int)[is_num_range], range_parts)
+    is_num = all(x.isdigit() for x in range_parts)
+    first, last = map((ord, int)[is_num], range_parts)
     # first, last = min(first, last), max(first, last)
     res = range(first, last + 1)
-    return list(res if is_num_range else map(chr, res))
+    return list(res if is_num else map(chr, res))
 
 
 # Модифицированная версия отсюда https://algo.monster/liteproblems/1096
@@ -287,7 +287,7 @@ class ProbeDict(typing.TypedDict):
 
 
 class ConfigDict(typing.TypedDict):
-    workers_num: typing.NotRequired[int]
+    workers: typing.NotRequired[int]
     timeout: typing.NotRequired[int | float]
     connect_timeout: typing.NotRequired[int | float]
     read_timeout: typing.NotRequired[int | float]
@@ -300,6 +300,504 @@ class ConfigDict(typing.TypedDict):
     skip_statuses: typing.NotRequired[list[str]]
     save_dir: typing.NotRequired[os.PathLike]
     probe_read_length: typing.NotRequired[str]
+
+
+OUTPUT_DIR = pathlib.Path.cwd() / "output"
+
+
+@dataclasses.dataclass
+class Settings:
+    workers: int = 10
+    parallel_probes: int = 50
+    max_host_error: int = 10
+    timeout: int | float | None = None
+    connect_timeout: int | float = 10.0
+    read_timeout: int | float = 5.0
+    host_delay: int = 120
+    proxy_url: str | None = None
+    ignore_hosts: typing.Iterable[str] | None = None
+    follow_redirects: bool = False
+    force_https: bool = False
+    save_dir: pathlib.Path = OUTPUT_DIR
+    skip_statuses: typing.Sequence[int] = dataclasses.field(
+        default_factory=list
+    )
+    # читаем и проверяем только первые 64kb
+    probe_read_length: int = 1 << 16
+    # TODO: добавить флаг?
+    bypass_cloudflare_tries: int = 1
+
+    def __post_init__(self) -> None:
+        # переводим в нижний регистр
+        self.ignore_hosts: set[str] = set(
+            map(str.lower, self.ignore_hosts or [])
+        )
+        if self.proxy_url is None:
+            self.proxy_url = os.getenv("PROXY_URL")
+
+
+@dataclasses.dataclass
+class Scanner:
+    probes: list[ProbeDict]
+    settings: Settings = dataclasses.field(default_factory=Settings)
+
+    async def scan(
+        self, urls: typing.Iterable[str], output: typing.TextIO = sys.stdout
+    ) -> None:
+        if self.settings.proxy_url and not (await self.check_proxy()):
+            raise ValueError("ip leak detected!")
+
+        queue = asyncio.Queue(maxsize=self.settings.workers)
+        sem = asyncio.Semaphore(
+            max(self.settings.parallel_probes, self.settings.workers)
+        )
+        lock = asyncio.Lock()
+        host_errors = collections.Counter()
+        user_agents = await self.get_user_agents()
+        # asyncio.TaskGroup генерирует сранные GroupException, которые непонятно как перехватывать выше по стеку вызова
+
+        workers = [
+            asyncio.create_task(
+                Worker(
+                    self,
+                    output=output,
+                    queue=queue,
+                    sem=sem,
+                    lock=lock,
+                    host_errors=host_errors,
+                    user_agents=user_agents,
+                ).run(),
+                name=f"worker_{i}",
+            )
+            for i in range(self.settings.workers)
+        ]
+
+        await self.produce(urls, queue)
+        await queue.join()
+
+        for worker in workers:
+            worker.cancel()
+
+    async def produce(
+        self, urls: typing.Iterable[str], queue: asyncio.Queue[str]
+    ) -> None:
+        for url in map(normalize_url, urls):
+            try:
+                url_sp = urllib.parse.urlsplit(url)
+                # hostname всегда в нижнем регистре
+                if self.is_ignored_host(url_sp.hostname):
+                    logger.debug(f"skip ignored host: {url_sp.hostname}")
+                    continue
+
+                # scheme тоже в нижний переводится
+                if url_sp.scheme == "http" and self.settings.force_https:
+                    url = "https" + url[4:]
+
+                await queue.put(url)
+            except Exception as ex:
+                logger.exception(ex)
+
+    def is_ignored_host(self, hostname: str) -> bool:
+        hostname_parts = hostname.split(".")
+
+        # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
+        hostname_wildcards = set(
+            [
+                ".".join(["*"] + hostname_parts[i:])
+                for i in range(1, len(hostname_parts))
+            ]
+            + [hostname]
+        )
+
+        return bool(hostname_wildcards & self.settings.ignore_hosts)
+
+    async def get_user_agents(self) -> list[str]:
+        logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
+        async with self.get_session() as session:
+            r = await session.get(USER_AGENTS_ENDPOINT)
+            json_data = await r.json()
+        return json_data["nodes"][1]["data"][2:-1][1::4]
+
+    async def check_proxy(self) -> bool:
+        client_ip = await self.get_ip(use_proxy=False)
+        logger.debug(f"client ip: {mask_ip(client_ip)}")
+        proxy_ip = await self.get_ip()
+        logger.debug(f"proxy ip: {mask_ip(proxy_ip)}")
+        return client_ip != proxy_ip
+
+    async def get_ip(self, **kw: typing.Any) -> str:
+        async with self.get_session(**kw) as session:
+            async with session.get("https://api.ipify.org") as response:
+                return await response.text()
+
+    @contextlib.asynccontextmanager
+    async def get_session(
+        self,
+        *,
+        user_agent: str | None = None,
+        use_proxy: bool = True,
+        headers: dict[str, str] = {},
+        **kwargs: typing.Any,
+    ) -> typing.AsyncIterator[aiohttp.ClientSession]:
+        con = (
+            ProxyConnector.from_url(self.settings.proxy_url, limit=0)
+            if use_proxy and self.settings.proxy_url
+            else aiohttp.TCPConnector(limit=0)
+        )
+
+        tmt = aiohttp.ClientTimeout(
+            total=self.settings.timeout,
+            sock_connect=self.settings.connect_timeout,
+            sock_read=self.settings.read_timeout,
+        )
+
+        async with aiohttp.ClientSession(
+            connector=con,
+            timeout=tmt,
+            **kwargs,
+        ) as session:
+            session.headers.update(
+                {
+                    "Accept": HEADER_ACCEPT,
+                    "Accept-Language": HEADER_ACCEPT_LANGUAGE,
+                    "Referer": GOOGLE_REFERER,
+                    # перебрасывает с http:// на https://
+                    # "Upgrade-Insecure-Requests": "1",
+                    "User-Agent": user_agent or DEFAULT_USER_AGENT,
+                    **headers,
+                }
+            )
+            yield session
+
+
+@dataclasses.dataclass
+class Worker:
+    scanner: Scanner
+    output: typing.TextIO
+    queue: asyncio.Queue[str]
+    lock: asyncio.Lock
+    sem: asyncio.Semaphore
+    host_errors: collections.Counter[str, int]
+    user_agents: typing.Sequence[str]
+
+    async def run(self) -> None:
+        task_name = asyncio.current_task().get_name()
+        logger.debug("started: %s", task_name)
+
+        self.next_request = 0
+        # без этой строки отработает как надо, но не выведет сообщения о
+        # завершении
+        with contextlib.suppress(asyncio.CancelledError):
+            while True:
+                url = await self.queue.get()
+
+                try:
+                    user_agent = self.rand_ua()
+                    logger.debug(f"user agent for {url}: {user_agent}")
+
+                    # Для каждого url используем новую сессию из-за того, что сессии
+                    # со временем начинают тормозить
+                    async with self.scanner.get_session(
+                        user_agent=user_agent
+                    ) as self.session:
+                        probe_tasks = []
+
+                        for probe in self.scanner.probes:
+                            for path in expand(probe["path"]):
+                                probe_tasks.append(
+                                    self.make_probe(url, path, probe)
+                                )
+
+                        logger.debug(
+                            f"probe tasks for {url}: {len(probe_tasks)}"
+                        )
+
+                        await asyncio.gather(
+                            *probe_tasks, return_exceptions=True
+                        )
+                # ! asyncio.exceptions.CancelledError наследуется напрямую от
+                # BaseException, поэтому нужно перехватывать Exception
+                except Exception as ex:
+                    logger.exception(ex)
+                finally:
+                    self.queue.task_done()
+
+        logger.debug("finished: %s", task_name)
+
+    @property
+    def settings(self) -> Settings:
+        return self.scanner.settings
+
+    def rand_ua(self) -> str:
+        return random.choice(self.user_agents)
+
+    async def make_probe(
+        self,
+        base_url: str,
+        path: str,
+        probe: ProbeDict,
+    ) -> None:
+        async with self.sem:
+            try:
+                netloc = urllib.parse.urlparse(base_url).netloc
+
+                if self.host_errors[netloc] >= self.settings.max_host_error:
+                    logger.warning(f"max host error exceeded: {netloc}")
+                    return
+
+                url = urllib.parse.urljoin(base_url, path)
+                headers = probe.get("headers", {}).copy()
+
+                await self.sleep()
+                response = await self.send_probe_request(url, headers, probe)
+
+                for tries in itertools.count(1):
+                    # Редиректы с http на https должны срабатывать, а так же на www.
+                    assert (
+                        remove_www(response.url._val.netloc)
+                        == remove_www(netloc)
+                    ), f"response does not have same domain with requested url: {url}"
+
+                    if response.status in self.settings.skip_statuses:
+                        logger.warning(
+                            f"skip status: {response.status} {response.url}"
+                        )
+                        return
+
+                    content: bytes = await response.content.read(
+                        self.settings.probe_read_length
+                    )
+
+                    text_content: str = content.decode(
+                        response.charset or "ascii", errors="replace"
+                    )
+
+                    # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
+                    if "<title>One moment, please...</title>" in text_content:
+                        logger.debug(f"cloudflare challenge detected: {url}")
+
+                        assert (
+                            tries > self.settings.bypass_cloudflare_tries
+                        ), f"maximum tries to bypass cloudflare exceeded: {self.settings.bypass_cloudflare_tries}"
+
+                        challenge = CloudflareChallenge.from_text(text_content)
+
+                        # разгадываем скобки и возвращаем запрашиваемую страницу
+                        response = await self.bypass_cloudflare_challenge(
+                            challenge,
+                            response,
+                            headers,
+                        )
+
+                        continue
+
+                    break
+
+                if (
+                    result := await self.get_probe_result(
+                        response,
+                        text_content,
+                        content,
+                        probe,
+                    )
+                ) is FAIL:
+                    logger.warning(f"failed probe {probe['name']!r}: {url}")
+                    return
+
+                logger.info(f"successed probe {probe['name']!r}: {url}")
+
+                js = json.dumps(
+                    remove_empty_from_dict(
+                        {
+                            "url": str(response.url),
+                            "input": base_url,
+                            "host": response.url.host,
+                            "port": response.url.port,
+                            "netloc": response.url._val.netloc,
+                            "http_version": f"{response.version.major}.{response.version.minor}",
+                            "status_code": response.status,
+                            "status_reason": response.reason,
+                            "content_length": response.content_length,
+                            "content_type": response.content_type,
+                            "content_charset": response.charset,
+                            "response_headers": dict(response.headers),
+                            "probe_name": probe["name"],
+                            **result,
+                        }
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                print(js, file=self.output, flush=True)
+            except Exception as ex:
+                logger.error(ex)
+                self.host_errors[netloc] += 1
+
+    async def sleep(self) -> None:
+        if self.settings.host_delay > 0:
+            async with (
+                self.lock
+            ):  # блокируем асинхронное выполнение остальных заданий
+                if (dt := self.next_request - time.monotonic()) > 0:
+                    # logger.debug(f"sleep: {dt:.3f}")
+                    await asyncio.sleep(dt)
+
+                self.next_request = (
+                    time.monotonic() + self.settings.host_delay / 1000
+                )
+
+    async def send_probe_request(
+        self,
+        url: str,
+        headers: dict[str, str],
+        probe: ProbeDict,
+    ) -> aiohttp.ClientResponse:
+        method = probe.get("method", "GET").upper()
+
+        logger.debug(f"send request: {method} {url}")
+
+        response = await self.session.request(
+            method,
+            url,
+            headers=headers,
+            params=probe.get("params"),
+            data=probe.get("data"),
+            json=probe.get("json"),
+            cookies=probe.get("cookies"),
+            allow_redirects=self.settings.follow_redirects,
+        )
+
+        logger.debug(
+            f"got response: {response.status} {response.method} {response.url}"
+        )
+
+        return response
+
+    async def solve_cloudflare_challenge(
+        self, challenge: CloudflareChallenge
+    ) -> int:
+        try:
+            return int(
+                await check_output(
+                    "node",
+                    "-e",
+                    f"console.log({challenge.west} + {challenge.east})",
+                )
+            )
+        except FileNotFoundError as ex:
+            raise RuntimeError(
+                "Node.js must be installed to solve cloudflare challenge!"
+            ) from ex
+
+    async def bypass_cloudflare_challenge(
+        self,
+        challenge: CloudflareChallenge,
+        origin_response: aiohttp.ClientResponse,
+        additional_headers: dict[str, str],
+    ) -> aiohttp.ClientResponse:
+        assert challenge.method == "get", f"unexptected {challenge.method = !r}"
+        solution = await self.solve_cloudflare_challenge(challenge)
+
+        logger.debug(f"{solution = }")
+
+        payload = {challenge.param: solution}
+        challenge_endpoint = urllib.parse.urljoin(
+            str(origin_response.url), challenge.action
+        )
+
+        challenge_response = await self.session.get(
+            url=challenge_endpoint,
+            params=payload,
+            headers=additional_headers | {"Referer": str(origin_response.url)},
+        )
+
+        assert (
+            len(challenge_response.history) == 1
+            and challenge_response.history[0].status == 301
+            # 'Set-Cookie': 'wschkid=ae96fb3bf715d463c7f3328d2e4377cb9aa6b155.1720572164.1; Expires=Thu, 08-Aug-24 00:42:44 GMT; Domain=<censored>; Path=/; HttpOnly; SameSite=Lax'
+            and challenge.param
+            in challenge_response.history[0].headers.get("Set-Cookie", "")
+            and challenge_response.url == origin_response.url
+        ), f"can't bypass challenge: {origin_response.url}"
+
+        return challenge_response
+
+    async def get_probe_result(
+        self,
+        response: aiohttp.ClientResponse,
+        text_content: str,
+        content: bytes,
+        conf: ProbeDict,
+    ) -> dict[str, typing.Any] | Fail:
+        rv = {}
+
+        if "condition" in conf:
+            # уже распарсенный
+            # mime_type, _ = parse_header(response.content_type)
+
+            vars_dict = {
+                "status_code": response.status,
+                "content_length": response.content_length,
+                "content_type": response.content_type,
+            }
+
+            if not execute(conf["condition"], vars_dict):
+                return FAIL
+
+        if "match" in conf:
+            if not re.search(conf["match"], text_content):
+                return FAIL
+
+        if "not_match" in conf:
+            if re.search(conf["not_match"], text_content):
+                return FAIL
+
+        if "extract" in conf:
+            if match := re.search(conf["extract"], text_content):
+                rv |= {"match": match.group()}
+            else:
+                return FAIL
+
+        if "extract_all" in conf:
+            if items := re.findall(conf["extract_all"], text_content):
+                rv |= {"matches": items}
+            else:
+                return FAIL
+
+        if conf.get("save_file"):
+            save_path = (
+                self.settings.save_dir
+                / response.host
+                / (
+                    response.url.path[1:]
+                    + ("", "index.html")[response.url.path.endswith("/")]
+                )
+            )
+
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with save_path.open("wb") as f:
+                f.write(content)
+
+                # читаем данные блоками по 64кб, если они остались в сокете
+                async for data in response.content.iter_chunked(1 << 16):
+                    f.write(data)
+
+            logger.info(f"file saved: {save_path}")
+
+            stat = save_path.stat()
+
+            if stat.st_size == 0:
+                logger.warning(f"empty file: {save_path}")
+                # save_path.unlink()
+                # return FAIL
+
+            rv |= {
+                "saved_bytes": stat.st_size,
+                "saved_as": str(save_path.resolve()),
+            }
+
+        return rv
 
 
 """
@@ -357,485 +855,12 @@ class CloudflareChallenge:
         )
 
 
-OUTPUT_DIR = pathlib.Path.cwd() / "output"
-
-
-@dataclasses.dataclass
-class Scanner:
-    probes: list[ProbeDict]
-    _: dataclasses.KW_ONLY
-    output: typing.TextIO = sys.stdout
-    workers_num: int = 10
-    timeout: int | float | None = None
-    connect_timeout: int | float = 10.0
-    read_timeout: int | float = 5.0
-    delay: int = 120
-    max_host_error: int = 10
-    proxy_url: str | None = None
-    ignore_hosts: typing.Iterable[str] | None = None
-    follow_redirects: bool = False
-    force_https: bool = False
-    save_dir: pathlib.Path = OUTPUT_DIR
-    skip_statuses: typing.Sequence[int] = dataclasses.field(
-        default_factory=list
-    )
-    # читаем и проверяем только первые 256kb
-    probe_read_length: int = 1 << 18
-    # TODO: добавить флаг?
-    bypass_cloudflare_tries: int = 1
-
-    def __post_init__(self) -> None:
-        self.lock = asyncio.Lock()
-        # переводим в нижний регистр
-        self.ignore_hosts: set[str] = set(
-            map(str.lower, self.ignore_hosts or [])
-        )
-        if self.proxy_url is None:
-            self.proxy_url = os.getenv("PROXY_URL")
-
-    async def scan(self, urls: typing.Iterable[str]) -> None:
-        if self.proxy_url and not (await self.check_proxy()):
-            raise ValueError("ip leak detected!")
-
-        self.queue = asyncio.Queue(maxsize=self.workers_num)
-        self.sem = asyncio.Semaphore(self.workers_num)
-        self.host_error = collections.Counter()
-        self.next_request = 0
-
-        # Генерирует сранные GroupException, которые сложно перехватывать выше
-        # по стеку вызова
-
-        # async with asyncio.TaskGroup() as tg:
-        #     for _ in range(self.workers_num):
-        #         tg.create_task(self.worker())
-
-        #     await self.produce(urls)
-        #     await self.queue.join()
-
-        #     logger.debug("stop workers")
-
-        #     for _ in range(self.workers_num):
-        #         self.queue.put_nowait(None)
-
-        workers = [
-            asyncio.create_task(self.worker(), name=f"worker_{i}")
-            for i in range(self.workers_num)
-        ]
-
-        await self.produce(urls)
-        await self.queue.join()
-
-        for worker in workers:
-            worker.cancel()
-
-    async def produce(self, urls: typing.Iterable[str]) -> None:
-        for url in map(normalize_url, urls):
-            try:
-                url_sp = urllib.parse.urlsplit(url)
-                # hostname всегда в нижнем регистре
-                if self.is_ignored_host(url_sp.hostname):
-                    logger.debug(f"skip ignored host: {url_sp.hostname}")
-                    continue
-
-                # scheme тоже в нижний переводится
-                if url_sp.scheme == "http" and self.force_https:
-                    url = "https" + url[4:]
-
-                await self.queue.put(url)
-            except Exception as ex:
-                logger.exception(ex)
-
-    async def worker(self) -> None:
-        task_name = asyncio.current_task().get_name()
-        logger.debug("started: %s", task_name)
-
-        # без этой строки отработает как надо, но не выведет сообщения о
-        # завершении
-        with contextlib.suppress(asyncio.CancelledError):
-            while True:
-                url = await self.queue.get()
-
-                try:
-                    user_agent = await self.rand_user_agent()
-                    logger.debug(f"user agent for {url}: {user_agent}")
-
-                    # Для каждого url используем новую сессию из-за того, что сессии
-                    # со временем начинают тормозить
-                    async with self.get_session(
-                        user_agent=user_agent
-                    ) as session:
-                        probe_tasks = []
-
-                        for probe in self.probes:
-                            for path in expand(probe["path"]):
-                                probe_tasks.append(
-                                    self.make_probe(session, url, path, probe)
-                                )
-
-                        logger.debug(
-                            f"probe tasks for {url}: {len(probe_tasks)}"
-                        )
-
-                        await asyncio.gather(
-                            *probe_tasks, return_exceptions=True
-                        )
-                # ! asyncio.exceptions.CancelledError наследуется напрямую от
-                # BaseException, поэтому нужно перехватывать Exception
-                except Exception as ex:
-                    logger.exception(ex)
-                finally:
-                    self.queue.task_done()
-
-        logger.debug("finished: %s", task_name)
-
-    async def make_probe(
-        self,
-        session: aiohttp.ClientSession,
-        base_url: str,
-        path: str,
-        probe: ProbeDict,
-    ) -> None:
-        # параллельно будет совершаться не более workers_num запросов
-        async with self.sem:
-            try:
-                host = urllib.parse.urlparse(base_url).netloc
-
-                if self.host_error[host] >= self.max_host_error:
-                    logger.warning(f"max host error exceeded: {host}")
-                    return
-
-                url = urllib.parse.urljoin(base_url, path)
-                headers = probe.get("headers", {}).copy()
-
-                response = await self.send_probe_request(
-                    session, url, headers, probe
-                )
-
-                for tries in itertools.count(1):
-                    if response.status in self.skip_statuses:
-                        logger.warning(
-                            f"skip status: {response.status} {response.url}"
-                        )
-                        return
-
-                    content: bytes = await response.content.read(
-                        self.probe_read_length
-                    )
-
-                    text_content: str = content.decode(
-                        response.charset or "ascii", errors="replace"
-                    )
-
-                    # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
-                    if "<title>One moment, please...</title>" in text_content:
-                        logger.debug(f"cloudflare challenge detected: {url}")
-
-                        assert (
-                            tries > self.bypass_cloudflare_tries
-                        ), f"maximum tries to bypass cloudflare exceeded: {self.bypass_cloudflare_tries}"
-
-                        challenge = CloudflareChallenge.from_text(text_content)
-
-                        # разгадываем скобки и возвращаем запрашиваемую страницу
-                        response = await self.bypass_cloudflare_challenge(
-                            session,
-                            challenge,
-                            response,
-                            headers,
-                        )
-
-                        continue
-
-                    break
-
-                if (
-                    result := await self.get_probe_result(
-                        response,
-                        text_content,
-                        content,
-                        probe,
-                    )
-                ) is FAIL:
-                    logger.warning(f"failed probe {probe['name']!r}: {url}")
-                    return
-
-                logger.info(f"successed probe {probe['name']!r}: {url}")
-
-                self.output_json(
-                    remove_empty_from_dict(
-                        {
-                            "url": str(response.url),
-                            "input": base_url,
-                            "host": response.url.host,
-                            "http_version": f"{response.version.major}.{response.version.minor}",
-                            "status_code": response.status,
-                            "status_reason": response.reason,
-                            "content_length": response.content_length,
-                            "content_type": response.content_type,
-                            "content_charset": response.charset,
-                            "response_headers": dict(response.headers),
-                            "probe_name": probe["name"],
-                            **result,
-                        }
-                    )
-                )
-            except Exception as ex:
-                logger.error(ex)
-                self.host_error[host] += 1
-
-    def is_ignored_host(self, hostname: str) -> bool:
-        hostname_parts = hostname.split(".")
-
-        # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
-        hostname_wildcards = set(
-            [
-                ".".join(["*"] + hostname_parts[i:])
-                for i in range(1, len(hostname_parts))
-            ]
-            + [hostname]
-        )
-
-        return bool(hostname_wildcards & self.ignore_hosts)
-
-    async def sleep_delay(self) -> None:
-        if self.delay > 0:
-            async with (
-                self.lock
-            ):  # блокируем асинхронное выполнение остальных заданий
-                if (dt := self.next_request - time.monotonic()) > 0:
-                    # logger.debug(f"sleep: {dt:.3f}")
-                    await asyncio.sleep(dt)
-
-                self.next_request = time.monotonic() + self.delay / 1000
-
-    async def solve_cloudflare_challenge(
-        self, challenge: CloudflareChallenge
-    ) -> int:
-        try:
-            return int(
-                await check_output(
-                    "node",
-                    "-e",
-                    f"console.log({challenge.west} + {challenge.east})",
-                )
-            )
-        except FileNotFoundError as ex:
-            raise RuntimeError(
-                "Node.js must be installed to solve cloudflare challenge!"
-            ) from ex
-
-    async def bypass_cloudflare_challenge(
-        self,
-        session: aiohttp.ClientSession,
-        challenge: CloudflareChallenge,
-        origin_response: aiohttp.ClientResponse,
-        additional_headers: dict[str, str],
-    ) -> aiohttp.ClientResponse:
-        assert challenge.method == "get", f"unexptected {challenge.method = !r}"
-        solution = await self.solve_cloudflare_challenge(challenge)
-
-        logger.debug(f"{solution = }")
-
-        payload = {challenge.param: solution}
-        challenge_endpoint = urllib.parse.urljoin(
-            str(origin_response.url), challenge.action
-        )
-
-        challenge_response = await session.get(
-            url=challenge_endpoint,
-            params=payload,
-            headers=additional_headers | {"Referer": str(origin_response.url)},
-        )
-
-        assert (
-            len(challenge_response.history) == 1
-            and challenge_response.history[0].status == 301
-            # 'Set-Cookie': 'wschkid=ae96fb3bf715d463c7f3328d2e4377cb9aa6b155.1720572164.1; Expires=Thu, 08-Aug-24 00:42:44 GMT; Domain=<censored>; Path=/; HttpOnly; SameSite=Lax'
-            and challenge.param
-            in challenge_response.history[0].headers.get("Set-Cookie", "")
-            and challenge_response.url == origin_response.url
-        ), f"can't bypass challenge: {origin_response.url}"
-
-        return challenge_response
-
-    async def send_probe_request(
-        self,
-        session: aiohttp.ClientSession,
-        url: str,
-        headers: dict[str, str],
-        probe: ProbeDict,
-    ) -> aiohttp.ClientResponse:
-        await self.sleep_delay()
-
-        method = probe.get("method", "GET").upper()
-
-        logger.debug(f"send request: {method} {url}")
-
-        response = await session.request(
-            method,
-            url,
-            headers=headers,
-            params=probe.get("params"),
-            data=probe.get("data"),
-            json=probe.get("json"),
-            cookies=probe.get("cookies"),
-            allow_redirects=self.follow_redirects,
-        )
-
-        logger.debug(
-            f"got response: {response.status} {response.method} {response.url}"
-        )
-
-        return response
-
-    async def rand_user_agent(self) -> str:
-        return random.choice(await self.get_user_agents())
-
-    async def get_probe_result(
-        self,
-        response: aiohttp.ClientResponse,
-        text_content: str,
-        content: bytes,
-        conf: ProbeDict,
-    ) -> dict[str, typing.Any] | Fail:
-        rv = {}
-
-        if "condition" in conf:
-            # уже распарсенный
-            # mime_type, _ = parse_header(response.content_type)
-
-            vars_dict = {
-                "status_code": response.status,
-                "content_length": response.content_length,
-                "content_type": response.content_type,
-            }
-
-            if not execute(conf["condition"], vars_dict):
-                return FAIL
-
-        if "match" in conf:
-            if not re.search(conf["match"], text_content):
-                return FAIL
-
-        if "not_match" in conf:
-            if re.search(conf["not_match"], text_content):
-                return FAIL
-
-        if "extract" in conf:
-            if match := re.search(conf["extract"], text_content):
-                rv |= {"match": match.group()}
-            else:
-                return FAIL
-
-        if "extract_all" in conf:
-            if items := re.findall(conf["extract_all"], text_content):
-                rv |= {"matches": items}
-            else:
-                return FAIL
-
-        if conf.get("save_file"):
-            save_path = (
-                self.save_dir
-                / response.host
-                / (
-                    response.url.path[1:]
-                    + ("", "index.html")[response.url.path.endswith("/")]
-                )
-            )
-
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-
-            with save_path.open("wb") as f:
-                f.write(content)
-
-                # читаем данные блоками по 64кб, если они остались в сокете
-                async for data in response.content.iter_chunked(1 << 16):
-                    f.write(data)
-
-            logger.info(f"file saved: {save_path}")
-
-            stat = save_path.stat()
-
-            if stat.st_size == 0:
-                logger.warning(f"empty file: {save_path}")
-                # save_path.unlink()
-                # return FAIL
-
-            rv |= {
-                "saved_bytes": stat.st_size,
-                "saved_as": str(save_path.resolve()),
-            }
-
-        return rv
-
-    def output_json(self, obj: typing.Any, **kw: typing.Any) -> None:
-        js = json.dumps(obj, ensure_ascii=False, sort_keys=True, **kw)
-        print(js, file=self.output, flush=True)
-
-    async def get_user_agents(self) -> list[str]:
-        if not hasattr(self, "_user_agents"):
-            logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
-            async with self.get_session() as session:
-                r = await session.get(USER_AGENTS_ENDPOINT)
-                json_data = await r.json()
-            self._user_agents = json_data["nodes"][1]["data"][2:-1][1::4]
-            assert self._user_agents
-        return list(self._user_agents)
-
-    async def check_proxy(self) -> bool:
-        client_ip = await self.get_ip(use_proxy=False)
-        logger.debug(f"client ip: {mask_ip(client_ip)}")
-        proxy_ip = await self.get_ip()
-        logger.debug(f"proxy ip: {mask_ip(proxy_ip)}")
-        return client_ip != proxy_ip
-
-    async def get_ip(self, **kw: typing.Any) -> str:
-        async with self.get_session(**kw) as session:
-            async with session.get("https://api.ipify.org") as response:
-                return await response.text()
-
-    @contextlib.asynccontextmanager
-    async def get_session(
-        self,
-        *,
-        user_agent: str | None = None,
-        use_proxy: bool = True,
-        headers: dict[str, str] = {},
-        **kwargs: typing.Any,
-    ) -> typing.AsyncIterator[aiohttp.ClientSession]:
-        con = (
-            ProxyConnector.from_url(self.proxy_url, limit=0)
-            if use_proxy and self.proxy_url
-            else aiohttp.TCPConnector(limit=0)
-        )
-
-        tmt = aiohttp.ClientTimeout(
-            total=self.timeout,
-            sock_connect=self.connect_timeout,
-            sock_read=self.read_timeout,
-        )
-
-        async with aiohttp.ClientSession(
-            connector=con,
-            timeout=tmt,
-            **kwargs,
-        ) as session:
-            session.headers.update(
-                {
-                    "Accept": HEADER_ACCEPT,
-                    "Accept-Language": HEADER_ACCEPT_LANGUAGE,
-                    "Referer": GOOGLE_REFERER,
-                    # перебрасывает с http:// на https://
-                    # "Upgrade-Insecure-Requests": "1",
-                    "User-Agent": user_agent or DEFAULT_USER_AGENT,
-                    **headers,
-                }
-            )
-            yield session
-
-
 def normalize_url(u: str) -> str:
     return u if "://" in u else f"https://{u}"
+
+
+def remove_www(s: str) -> str:
+    return re.sub(r"^www\.", "", s, re.IGNORECASE)
 
 
 def mask_ip(addr: str, ch: str = "*") -> str:
@@ -907,11 +932,12 @@ class NameSpace(argparse.Namespace):
     output: typing.TextIO
     config: typing.TextIO
     ignore_hosts: typing.TextIO
-    workers_num: int
+    workers: int
+    parallel_probes: int
     timeout: int | float
     connect_timeout: int | float
     read_timeout: int | float
-    delay: int | float
+    host_delay: int | float
     max_host_error: int
     follow_redirects: bool
     force_https: bool
@@ -966,19 +992,35 @@ def parse_args(
     )
     parser.add_argument(
         "-w",
-        "--workers-num",
         "--workers",
         help="number of workers",
         type=int,
-        default=20,
+        default=10,
     )
-    parser.add_argument("-t", "--timeout", help="total timeout sec", type=float)
+    parser.add_argument(
+        "-p",
+        "--parallel-probes",
+        "--parallel",
+        help="number of parallel probes",
+        type=int,
+        default=50,
+    )
+    parser.add_argument(
+        "-maxhe",
+        "--max-host-error",
+        help="maximum number of errors for a host after which other paths will be skipped",
+        type=int,
+        default=30,
+    )
+    parser.add_argument(
+        "-t", "--timeout", help="probe total timeout sec", type=float
+    )
     parser.add_argument(
         "-r",
         "--read-timeout",
         "--socket-read",
         "--read",
-        help="socket read timeout sec",
+        help="probe socket read timeout sec",
         type=float,
         default=5.0,
     )
@@ -987,29 +1029,23 @@ def parse_args(
         "--connect-timeout",
         "--socket-connect",
         "--connect",
-        help="socket read timeout sec",
+        help="probe socket read timeout sec",
         type=float,
         default=10.0,
     )
     parser.add_argument(
         "-d",
+        "--host-delay",
         "--delay",
-        help="delay in milliseconds",
+        help="host delay before probe request in milliseconds",
         type=int,
-        default=50,
+        default=120,
     )
     parser.add_argument(
         "--ignore-hosts",
         "--ignore",
         help="ignore hosts file",
         type=argparse.FileType(),
-    )
-    parser.add_argument(
-        "-maxhe",
-        "--max-host-error",
-        help="maximum number of errors for a host after which other paths will be skipped",
-        type=int,
-        default=10,
     )
     parser.add_argument(
         "-f",
@@ -1040,7 +1076,7 @@ def parse_args(
         "--probe-read-length",
         "--probe-read",
         help="probe read length; supported units: K, M",
-        default="128k",
+        default="64k",
     )
     parser.add_argument(
         "-v",
@@ -1079,14 +1115,13 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     if not args.input.isatty():
         urls = itertools.chain(urls, filter_empty_lines(args.input))
 
-    scanner = Scanner(
-        probes=conf["probes"],
-        output=args.output,
+    settings = Settings(
         timeout=conf.get("timeout", args.timeout),
         connect_timeout=conf.get("connect_timeout", args.connect_timeout),
         read_timeout=conf.get("read_timeout", args.read_timeout),
-        workers_num=conf.get("workers_num", args.workers_num),
-        delay=conf.get("delay", args.delay),
+        workers=conf.get("workers", args.workers),
+        parallel_probes=conf.get("parallel_probes", args.parallel_probes),
+        host_delay=conf.get("host_delay", args.host_delay),
         save_dir=pathlib.Path(conf.get("save_dir", args.save_dir)),
         ignore_hosts=conf.get(
             "ignore_hosts",
@@ -1104,8 +1139,13 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         ),
     )
 
+    scanner = Scanner(
+        probes=conf["probes"],
+        settings=settings,
+    )
+
     try:
-        asyncio.run(scanner.scan(urls))
+        asyncio.run(scanner.scan(urls, output=args.output))
     except KeyboardInterrupt:
         logger.error("execution interrupted by user")
         return 2
