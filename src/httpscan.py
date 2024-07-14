@@ -780,8 +780,8 @@ class Worker:
 
             if stat.st_size == 0:
                 logger.warning(f"empty file: {save_path}")
-                # save_path.unlink()
-                # return FAIL
+                save_path.unlink()
+                return FAIL
 
             rv |= {
                 "saved_bytes": stat.st_size,
