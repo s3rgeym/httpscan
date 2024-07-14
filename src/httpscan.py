@@ -354,7 +354,6 @@ class Scanner:
         lock = asyncio.Lock()
         host_errors = collections.Counter()
         user_agents = await self.get_user_agents()
-        # asyncio.TaskGroup генерирует сранные GroupException, которые непонятно как перехватывать выше по стеку вызова
 
         workers = [
             Worker(
@@ -544,9 +543,9 @@ class Worker:
 
             for tries in itertools.count(1):
                 # Редиректы с http на https должны срабатывать, а так же на www.
-                assert (
-                    remove_www(response.url._val.netloc) == remove_www(netloc)
-                ), f"response does not have same domain with requested url: {url}"
+                # assert (
+                #     remove_www(response.url._val.netloc) == remove_www(netloc)
+                # ), f"response does not have same domain with requested url: {url}"
 
                 if response.status in self.settings.skip_statuses:
                     logger.warning(
