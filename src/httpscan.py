@@ -295,7 +295,7 @@ class ConfigDict(typing.TypedDict):
     probes: typing.NotRequired[list[ProbeDict]]
     ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
-    follow_redirects: typing.NotRequired[bool]
+
     force_https: typing.NotRequired[bool]
     skip_statuses: typing.NotRequired[list[str]]
     save_dir: typing.NotRequired[os.PathLike]
@@ -316,7 +316,7 @@ class Settings:
     host_delay: int = 120
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
-    follow_redirects: bool = False
+
     force_https: bool = False
     save_dir: pathlib.Path = OUTPUT_DIR
     skip_statuses: typing.Sequence[int] = dataclasses.field(
@@ -357,29 +357,24 @@ class Scanner:
         # asyncio.TaskGroup генерирует сранные GroupException, которые непонятно как перехватывать выше по стеку вызова
 
         workers = [
-            asyncio.create_task(
-                Worker(
-                    self,
-                    output=output,
-                    queue=queue,
-                    sem=sem,
-                    lock=lock,
-                    host_errors=host_errors,
-                    user_agents=user_agents,
-                ).run(),
-                name=f"worker_{i}",
-            )
-            for i in range(self.settings.workers)
+            Worker(
+                self,
+                output=output,
+                queue=queue,
+                sem=sem,
+                lock=lock,
+                host_errors=host_errors,
+                user_agents=user_agents,
+            ).run()
+            for _ in range(self.settings.workers)
         ]
 
-        await self.produce(urls, queue)
-        await queue.join()
-
-        for worker in workers:
-            worker.cancel()
+        await asyncio.gather(
+            self.produce(urls, queue), *workers, return_exceptions=True
+        )
 
     async def produce(
-        self, urls: typing.Iterable[str], queue: asyncio.Queue[str]
+        self, urls: typing.Iterable[str], queue: asyncio.Queue
     ) -> None:
         for url in map(normalize_url, urls):
             try:
@@ -396,6 +391,9 @@ class Scanner:
                 await queue.put(url)
             except Exception as ex:
                 logger.exception(ex)
+
+        for _ in range(self.settings.workers):
+            await queue.put(None)
 
     def is_ignored_host(self, hostname: str) -> bool:
         hostname_parts = hostname.split(".")
@@ -474,7 +472,7 @@ class Scanner:
 class Worker:
     scanner: Scanner
     output: typing.TextIO
-    queue: asyncio.Queue[str]
+    queue: asyncio.Queue
     lock: asyncio.Lock
     sem: asyncio.Semaphore
     host_errors: collections.Counter[str, int]
@@ -491,6 +489,9 @@ class Worker:
             while True:
                 url = await self.queue.get()
 
+                if url is None:
+                    break
+
                 try:
                     user_agent = self.rand_ua()
                     logger.debug(f"user agent for {url}: {user_agent}")
@@ -500,21 +501,13 @@ class Worker:
                     async with self.scanner.get_session(
                         user_agent=user_agent
                     ) as self.session:
-                        probe_tasks = []
-
-                        for probe in self.scanner.probes:
-                            for path in expand(probe["path"]):
-                                probe_tasks.append(
-                                    self.make_probe(url, path, probe)
-                                )
-
-                        logger.debug(
-                            f"probe tasks for {url}: {len(probe_tasks)}"
-                        )
-
-                        await asyncio.gather(
-                            *probe_tasks, return_exceptions=True
-                        )
+                        async with asyncio.TaskGroup() as tg:
+                            for probe in self.scanner.probes:
+                                async with self.sem:
+                                    for path in expand(probe["path"]):
+                                        tg.create_task(
+                                            self.make_probe(url, path, probe)
+                                        )
                 # ! asyncio.exceptions.CancelledError наследуется напрямую от
                 # BaseException, поэтому нужно перехватывать Exception
                 except Exception as ex:
@@ -537,101 +530,98 @@ class Worker:
         path: str,
         probe: ProbeDict,
     ) -> None:
-        async with self.sem:
-            try:
-                netloc = urllib.parse.urlparse(base_url).netloc
+        try:
+            netloc = urllib.parse.urlparse(base_url).netloc
 
-                if self.host_errors[netloc] >= self.settings.max_host_error:
-                    logger.warning(f"max host error exceeded: {netloc}")
+            if self.host_errors[netloc] >= self.settings.max_host_error:
+                logger.warning(f"max host error exceeded: {netloc}")
+                return
+
+            url = urllib.parse.urljoin(base_url, path)
+            headers = probe.get("headers", {}).copy()
+
+            response = await self.send_probe_request(url, headers, probe)
+
+            for tries in itertools.count(1):
+                # Редиректы с http на https должны срабатывать, а так же на www.
+                assert (
+                    remove_www(response.url._val.netloc) == remove_www(netloc)
+                ), f"response does not have same domain with requested url: {url}"
+
+                if response.status in self.settings.skip_statuses:
+                    logger.warning(
+                        f"skip status: {response.status} {response.url}"
+                    )
                     return
 
-                url = urllib.parse.urljoin(base_url, path)
-                headers = probe.get("headers", {}).copy()
-
-                await self.sleep()
-                response = await self.send_probe_request(url, headers, probe)
-
-                for tries in itertools.count(1):
-                    # Редиректы с http на https должны срабатывать, а так же на www.
-                    assert (
-                        remove_www(response.url._val.netloc)
-                        == remove_www(netloc)
-                    ), f"response does not have same domain with requested url: {url}"
-
-                    if response.status in self.settings.skip_statuses:
-                        logger.warning(
-                            f"skip status: {response.status} {response.url}"
-                        )
-                        return
-
-                    content: bytes = await response.content.read(
-                        self.settings.probe_read_length
-                    )
-
-                    text_content: str = content.decode(
-                        response.charset or "ascii", errors="replace"
-                    )
-
-                    # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
-                    if "<title>One moment, please...</title>" in text_content:
-                        logger.debug(f"cloudflare challenge detected: {url}")
-
-                        assert (
-                            tries > self.settings.bypass_cloudflare_tries
-                        ), f"maximum tries to bypass cloudflare exceeded: {self.settings.bypass_cloudflare_tries}"
-
-                        challenge = CloudflareChallenge.from_text(text_content)
-
-                        # разгадываем скобки и возвращаем запрашиваемую страницу
-                        response = await self.bypass_cloudflare_challenge(
-                            challenge,
-                            response,
-                            headers,
-                        )
-
-                        continue
-
-                    break
-
-                if (
-                    result := await self.get_probe_result(
-                        response,
-                        text_content,
-                        content,
-                        probe,
-                    )
-                ) is FAIL:
-                    logger.warning(f"failed probe {probe['name']!r}: {url}")
-                    return
-
-                logger.info(f"successed probe {probe['name']!r}: {url}")
-
-                js = json.dumps(
-                    remove_empty_from_dict(
-                        {
-                            "url": str(response.url),
-                            "input": base_url,
-                            "host": response.url.host,
-                            "port": response.url.port,
-                            "netloc": response.url._val.netloc,
-                            "http_version": f"{response.version.major}.{response.version.minor}",
-                            "status_code": response.status,
-                            "status_reason": response.reason,
-                            "content_length": response.content_length,
-                            "content_type": response.content_type,
-                            "content_charset": response.charset,
-                            "response_headers": dict(response.headers),
-                            "probe_name": probe["name"],
-                            **result,
-                        }
-                    ),
-                    ensure_ascii=False,
-                    sort_keys=True,
+                content: bytes = await response.content.read(
+                    self.settings.probe_read_length
                 )
-                print(js, file=self.output, flush=True)
-            except Exception as ex:
-                logger.error(ex)
-                self.host_errors[netloc] += 1
+
+                text_content: str = content.decode(
+                    response.charset or "ascii", errors="replace"
+                )
+
+                # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
+                if "<title>One moment, please...</title>" in text_content:
+                    logger.debug(f"cloudflare challenge detected: {url}")
+
+                    assert (
+                        tries > self.settings.bypass_cloudflare_tries
+                    ), f"maximum tries to bypass cloudflare exceeded: {self.settings.bypass_cloudflare_tries}"
+
+                    challenge = CloudflareChallenge.from_text(text_content)
+
+                    # разгадываем скобки и возвращаем запрашиваемую страницу
+                    response = await self.bypass_cloudflare_challenge(
+                        challenge,
+                        response,
+                        headers,
+                    )
+
+                    continue
+
+                break
+
+            if (
+                result := await self.get_probe_result(
+                    response,
+                    text_content,
+                    content,
+                    probe,
+                )
+            ) is FAIL:
+                logger.warning(f"failed probe {probe['name']!r}: {url}")
+                return
+
+            logger.info(f"successed probe {probe['name']!r}: {url}")
+
+            js = json.dumps(
+                remove_empty_from_dict(
+                    {
+                        "url": str(response.url),
+                        "input": base_url,
+                        "host": response.url.host,
+                        "port": response.url.port,
+                        "netloc": response.url._val.netloc,
+                        "http_version": f"{response.version.major}.{response.version.minor}",
+                        "status_code": response.status,
+                        "status_reason": response.reason,
+                        "content_length": response.content_length,
+                        "content_type": response.content_type,
+                        "content_charset": response.charset,
+                        "response_headers": dict(response.headers),
+                        "probe_name": probe["name"],
+                        **result,
+                    }
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            print(js, file=self.output, flush=True)
+        except Exception as ex:
+            logger.error(ex)
+            self.host_errors[netloc] += 1
 
     async def sleep(self) -> None:
         if self.settings.host_delay > 0:
@@ -652,8 +642,9 @@ class Worker:
         headers: dict[str, str],
         probe: ProbeDict,
     ) -> aiohttp.ClientResponse:
-        method = probe.get("method", "GET").upper()
+        await self.sleep()
 
+        method = probe.get("method", "GET").upper()
         logger.debug(f"send request: {method} {url}")
 
         response = await self.session.request(
@@ -664,7 +655,7 @@ class Worker:
             data=probe.get("data"),
             json=probe.get("json"),
             cookies=probe.get("cookies"),
-            allow_redirects=self.settings.follow_redirects,
+            allow_redirects=False,
         )
 
         logger.debug(
@@ -939,7 +930,7 @@ class NameSpace(argparse.Namespace):
     read_timeout: int | float
     host_delay: int | float
     max_host_error: int
-    follow_redirects: bool
+
     force_https: bool
     skip_statuses: list[str]
     proxy_url: str
@@ -1129,7 +1120,6 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         ),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
-        follow_redirects=conf.get("follow_redirects", args.follow_redirects),
         force_https=conf.get("force_https", args.force_https),
         skip_statuses=parse_statuses(
             conf.get("skip_statuses", args.skip_statuses)
