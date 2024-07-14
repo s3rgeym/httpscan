@@ -602,7 +602,7 @@ class Worker:
                         "input": base_url,
                         "host": response.url.host,
                         "port": response.url.port,
-                        "netloc": response.url._val.netloc,
+                        # "netloc": response.url._val.netloc,
                         "http_version": f"{response.version.major}.{response.version.minor}",
                         "status_code": response.status,
                         "status_reason": response.reason,
