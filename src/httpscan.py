@@ -929,7 +929,6 @@ class NameSpace(argparse.Namespace):
     read_timeout: int | float
     host_delay: int | float
     max_host_error: int
-
     force_https: bool
     skip_statuses: list[str]
     proxy_url: str
@@ -1036,13 +1035,6 @@ def parse_args(
         "--ignore",
         help="ignore hosts file",
         type=argparse.FileType(),
-    )
-    parser.add_argument(
-        "-f",
-        "--follow-redirects",
-        help="follow redirects",
-        action=argparse.BooleanOptionalAction,
-        default=False,
     )
     parser.add_argument(
         "--force-https",
