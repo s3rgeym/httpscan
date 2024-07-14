@@ -1098,6 +1098,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     if not args.input.isatty():
         urls = itertools.chain(urls, filter_empty_lines(args.input))
 
+    # TODO: сделать что-то с настройками. Очень громоздко выглядит
     settings = Settings(
         timeout=conf.get("timeout", args.timeout),
         connect_timeout=conf.get("connect_timeout", args.connect_timeout),
