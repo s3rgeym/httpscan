@@ -503,6 +503,7 @@ class Worker:
                         async with asyncio.TaskGroup() as tg:
                             for probe in self.scanner.probes:
                                 for path in expand(probe["path"]):
+                                    await self.sleep()
                                     async with self.sem:
                                         tg.create_task(
                                             self.make_probe(url, path, probe)
@@ -641,8 +642,6 @@ class Worker:
         headers: dict[str, str],
         probe: ProbeDict,
     ) -> aiohttp.ClientResponse:
-        await self.sleep()
-
         method = probe.get("method", "GET").upper()
         logger.debug(f"send request: {method} {url}")
 
