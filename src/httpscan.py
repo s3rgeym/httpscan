@@ -502,8 +502,8 @@ class Worker:
                     ) as self.session:
                         async with asyncio.TaskGroup() as tg:
                             for probe in self.scanner.probes:
-                                async with self.sem:
-                                    for path in expand(probe["path"]):
+                                for path in expand(probe["path"]):
+                                    async with self.sem:
                                         tg.create_task(
                                             self.make_probe(url, path, probe)
                                         )
