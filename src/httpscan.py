@@ -133,7 +133,7 @@ class ExpressionExecutor:
         "ID": r"[a-z_][a-z0-9_]*",
         "NUMBER": r"[-+]?\d+(\.\d+)?",
         "STRING": r'(?:"(?:\\"|[^"])*"|\'(?:\\\'|[^\'])*\')',
-        "COMPARE": r"(?:[=!]=|[<>]=?)",
+        "COMPARE": r"(?:=~|[=!]=|[<>]=?)",
         "NOT": r"(?:not|!)",
         "AND": r"(?:and|&&)",
         "OR": r"(?:or|\|\|)",
@@ -220,6 +220,9 @@ class ExpressionExecutor:
                     rv = rv == self.primary()
                 case "!=":
                     rv = rv != self.primary()
+                # соответствие шаблону
+                case "=~":
+                    rv = re.search(self.primary(), rv) is not None
                 case _:
                     raise ValueError(self.cur_tok.value)
             # # 1 < '2'
@@ -640,23 +643,11 @@ class Worker:
             logger.info(f"successed probe {probe['name']!r}: {url}")
 
             report = {
-                "url": str(response.url),
                 "input": base_url,
-                "host": response.url.host,
-                "port": response.url.port,
-                "http_version": f"{response.version.major}.{response.version.minor}",
-                "status_code": response.status,
-                "status_reason": response.reason,
-                "content_length": response.content_length,
-                "content_type": response.content_type,
-                "content_charset": response.charset,
                 "response_headers": dict(response.headers),
                 "probe_name": probe["name"],
                 **result,
             }
-
-            if m := TITLE_RE.search(text_content):
-                report["title"] = m.group(1)
 
             js = json.dumps(
                 remove_empty_from_dict(report),
@@ -765,19 +756,25 @@ class Worker:
         content: bytes,
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | FailType:
-        rv = {}
+        rv = {
+            "url": str(response.url),
+            "host": response.url.host,
+            "port": response.url.port,
+            "http_version": f"{response.version.major}.{response.version.minor}",
+            "status_code": response.status,
+            "status_reason": response.reason,
+            "content_length": response.content_length,
+            "content_type": response.content_type,
+            "content_charset": response.charset,
+        }
+
+        if m := TITLE_RE.search(text_content):
+            rv["title"] = m.group(1)
 
         if "condition" in conf:
             # уже распарсенный
             # mime_type, _ = parse_header(response.content_type)
-
-            vars_dict = {
-                "status_code": response.status,
-                "content_length": response.content_length,
-                "content_type": response.content_type,
-            }
-
-            if not execute(conf["condition"], vars_dict):
+            if not execute(conf["condition"], rv):
                 return FAIL
 
         if "match" in conf:
