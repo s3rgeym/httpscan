@@ -24,9 +24,10 @@ from functools import cached_property
 import aiohttp
 import aiohttp.abc
 import yaml
+from aiodns import DNSResolver
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 __author__ = "Sergey M"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
@@ -293,11 +294,11 @@ class ConfigDict(typing.TypedDict):
     read_timeout: typing.NotRequired[int | float]
     max_host_error: typing.NotRequired[int]
     probes: typing.NotRequired[list[ProbeDict]]
-    ignore_hosts: typing.NotRequired[list[str]]
+    exclude_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
     user_agent: typing.NotRequired[str]
     force_https: typing.NotRequired[bool]
-    skip_statuses: typing.NotRequired[list[str]]
+    exclude_statuses: typing.NotRequired[list[str]]
     save_dir: typing.NotRequired[os.PathLike]
     probe_read_length: typing.NotRequired[str]
 
@@ -316,11 +317,14 @@ class Settings:
     read_timeout: int | float = 5.0
     host_delay: int = 120
     proxy_url: str | None = None
-    ignore_hosts: typing.Iterable[str] | None = None
+    exclude_hosts: typing.Iterable[str] | None = None
     user_agent: str | None = None
     force_https: bool = False
     save_dir: pathlib.Path = OUTPUT_DIR
-    skip_statuses: typing.Sequence[int] = dataclasses.field(
+    match_statuses: typing.Sequence[int] = dataclasses.field(
+        default_factory=list
+    )
+    exclude_statuses: typing.Sequence[int] = dataclasses.field(
         default_factory=list
     )
     # читаем и проверяем только первые 64kb
@@ -330,8 +334,8 @@ class Settings:
 
     def __post_init__(self) -> None:
         # переводим в нижний регистр
-        self.ignore_hosts: set[str] = set(
-            map(str.lower, self.ignore_hosts or [])
+        self.exclude_hosts: set[str] = set(
+            map(str.lower, self.exclude_hosts or [])
         )
         if self.proxy_url is None:
             self.proxy_url = os.getenv("PROXY_URL")
@@ -357,7 +361,10 @@ class Scanner:
 
         user_agents = []
         if not self.settings.user_agent:
-            user_agents = await self.get_user_agents()
+            try:
+                user_agents = await self.get_user_agents()
+            except Exception:
+                logger.warning("can't fetch user agents")
 
         workers = [
             Worker(
@@ -383,7 +390,7 @@ class Scanner:
             try:
                 url_sp = urllib.parse.urlsplit(url)
                 # hostname всегда в нижнем регистре
-                if self.is_ignored_host(url_sp.hostname):
+                if self.excluded_host(url_sp.hostname):
                     logger.debug(f"skip ignored host: {url_sp.hostname}")
                     continue
 
@@ -398,7 +405,7 @@ class Scanner:
         for _ in range(self.settings.workers):
             await queue.put(None)
 
-    def is_ignored_host(self, hostname: str) -> bool:
+    def excluded_host(self, hostname: str) -> bool:
         hostname_parts = hostname.split(".")
 
         # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
@@ -410,7 +417,7 @@ class Scanner:
             + [hostname]
         )
 
-        return bool(hostname_wildcards & self.settings.ignore_hosts)
+        return bool(hostname_wildcards & self.settings.exclude_hosts)
 
     async def get_user_agents(self) -> list[str]:
         logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
@@ -497,10 +504,25 @@ class Worker:
                     break
 
                 try:
+                    # resolver = DNSResolver(
+                    #     nameservers=[
+                    #         "8.8.8.8",
+                    #         "8.8.4.4",
+                    #         "1.1.1.1",
+                    #         "1.0.0.1",
+                    #     ]
+                    # )
+
+                    # res = await resolver.getaddrinfo(
+                    #     urllib.parse.urlsplit(url).hostname
+                    # )
+
                     user_agent = (
                         self.settings.user_agent
                         if self.settings.user_agent
                         else self.rand_ua()
+                        if self.user_agents
+                        else DEFAULT_USER_AGENT
                     )
 
                     logger.debug(f"user agent for {url}: {user_agent}")
@@ -558,8 +580,16 @@ class Worker:
                 # assert (
                 #     remove_www(response.url._val.netloc) == remove_www(netloc)
                 # ), f"response does not have same domain with requested url: {url}"
+                if (
+                    self.settings.match_statuses
+                    and response.status not in self.settings.exclude_statuses
+                ):
+                    logger.warning(
+                        f"skip status: {response.status} {response.url}"
+                    )
+                    return
 
-                if response.status in self.settings.skip_statuses:
+                if response.status in self.settings.exclude_statuses:
                     logger.warning(
                         f"skip status: {response.status} {response.url}"
                     )
@@ -933,7 +963,7 @@ class NameSpace(argparse.Namespace):
     input: typing.TextIO
     output: typing.TextIO
     config: typing.TextIO
-    ignore_hosts: typing.TextIO
+    exclude_hosts: typing.TextIO
     workers: int
     parallel_probes: int
     timeout: int | float
@@ -942,7 +972,8 @@ class NameSpace(argparse.Namespace):
     host_delay: int | float
     max_host_error: int
     force_https: bool
-    skip_statuses: list[str]
+    match_statuses: list[str]
+    exclude_statuses: list[str]
     proxy_url: str
     probe_read_length: int
     save_dir: str
@@ -1041,12 +1072,12 @@ def parse_args(
         "--delay",
         help="host delay before probe request in milliseconds",
         type=int,
-        default=334,
+        default=150,
     )
     parser.add_argument(
-        "--ignore-hosts",
-        "--ignore",
-        help="ignore hosts file",
+        "-xh",
+        "--exclude-hosts",
+        help="exclude hosts file",
         type=argparse.FileType(),
     )
     parser.add_argument(
@@ -1056,11 +1087,18 @@ def parse_args(
         default=False,
     )
     parser.add_argument(
-        "--skip-statuses",
-        "--skip-status",
+        "-ms",
+        "--match-statuses",
         nargs="+",
         default=[],
-        help="always skip status codes",
+        help="match status codes",
+    )
+    parser.add_argument(
+        "-xs",
+        "--exclude-statuses",
+        nargs="+",
+        default=[],
+        help="exclude status codes",
     )
     parser.add_argument(
         "--proxy-url",
@@ -1124,15 +1162,20 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         parallel_probes=conf.get("parallel_probes", args.parallel_probes),
         host_delay=conf.get("host_delay", args.host_delay),
         save_dir=pathlib.Path(conf.get("save_dir", args.save_dir)),
-        ignore_hosts=conf.get(
-            "ignore_hosts",
-            filter_empty_lines(args.ignore_hosts) if args.ignore_hosts else [],
+        exclude_hosts=conf.get(
+            "exclude_hosts",
+            filter_empty_lines(args.exclude_hosts)
+            if args.exclude_hosts
+            else [],
         ),
         max_host_error=conf.get("max_host_error", args.max_host_error),
         proxy_url=conf.get("proxy_url", args.proxy_url),
         force_https=conf.get("force_https", args.force_https),
-        skip_statuses=parse_statuses(
-            conf.get("skip_statuses", args.skip_statuses)
+        exclude_statuses=parse_statuses(
+            conf.get("exclude_statuses", args.exclude_statuses)
+        ),
+        match_statuses=parse_statuses(
+            conf.get("match_statuses", args.match_statuses)
         ),
         probe_read_length=parse_size(
             conf.get("probe_read_length", args.probe_read_length)
