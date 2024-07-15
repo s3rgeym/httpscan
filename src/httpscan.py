@@ -757,7 +757,7 @@ class Worker:
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | FailType:
         rv = {
-            "url": str(response.url),
+            "response_url": str(response.url),
             "host": response.url.host,
             "port": response.url.port,
             "http_version": f"{response.version.major}.{response.version.minor}",
