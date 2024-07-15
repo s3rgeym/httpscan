@@ -40,10 +40,12 @@ GOOGLE_REFERER = "https://www.google.com/"
 
 USER_AGENTS_ENDPOINT = "https://useragents.io/random/__data.json?limit=1000"
 
+TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE)
 
-Fail = typing.NewType("Fail", None)
 
-FAIL = Fail(0)
+FailType = typing.NewType("FailType", None)
+
+FAIL = FailType(0)
 
 
 class ANSI:
@@ -637,25 +639,27 @@ class Worker:
 
             logger.info(f"successed probe {probe['name']!r}: {url}")
 
+            report = {
+                "url": str(response.url),
+                "input": base_url,
+                "host": response.url.host,
+                "port": response.url.port,
+                "http_version": f"{response.version.major}.{response.version.minor}",
+                "status_code": response.status,
+                "status_reason": response.reason,
+                "content_length": response.content_length,
+                "content_type": response.content_type,
+                "content_charset": response.charset,
+                "response_headers": dict(response.headers),
+                "probe_name": probe["name"],
+                **result,
+            }
+
+            if m := TITLE_RE.search(text_content):
+                report["title"] = m.group(1)
+
             js = json.dumps(
-                remove_empty_from_dict(
-                    {
-                        "url": str(response.url),
-                        "input": base_url,
-                        "host": response.url.host,
-                        "port": response.url.port,
-                        # "netloc": response.url._val.netloc,
-                        "http_version": f"{response.version.major}.{response.version.minor}",
-                        "status_code": response.status,
-                        "status_reason": response.reason,
-                        "content_length": response.content_length,
-                        "content_type": response.content_type,
-                        "content_charset": response.charset,
-                        "response_headers": dict(response.headers),
-                        "probe_name": probe["name"],
-                        **result,
-                    }
-                ),
+                remove_empty_from_dict(report),
                 ensure_ascii=False,
                 sort_keys=True,
             )
@@ -760,7 +764,7 @@ class Worker:
         text_content: str,
         content: bytes,
         conf: ProbeDict,
-    ) -> dict[str, typing.Any] | Fail:
+    ) -> dict[str, typing.Any] | FailType:
         rv = {}
 
         if "condition" in conf:
@@ -1077,6 +1081,7 @@ def parse_args(
     parser.add_argument(
         "-xh",
         "--exclude-hosts",
+        "--ignore-hosts",
         help="exclude hosts file",
         type=argparse.FileType(),
     )
@@ -1096,6 +1101,7 @@ def parse_args(
     parser.add_argument(
         "-xs",
         "--exclude-statuses",
+        "--ignore-statuses",
         nargs="+",
         default=[],
         help="exclude status codes",
@@ -1135,6 +1141,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     logger.setLevel(
         max(logging.DEBUG, logging.WARNING - logging.DEBUG * args.verbosity)
     )
+
     logger.addHandler(ColorHandler())
 
     logger.debug("debugger: %s", ["off", "on"][DEBUGGER_ON])
