@@ -65,14 +65,14 @@ probes:
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_charset": "UTF-8", "content_length": 667, "content_type": "text/html", "host": "<censored>", "http_version": "1.1", "input": "http://<censored>/", "probe_name": "server directory listing", "response_headers": {"Content-Encoding": "gzip", "Content-Length": "667", "Content-Type": "text/html;charset=UTF-8", "Date": "Fri, 12 Jul 2024 16:14:55 GMT", "Server": "Apache/2.4.25 (Debian)", "Vary": "Accept-Encoding"}, "status_code": 200, "status_reason": "OK", "url": "http://<censored>/includes/"}
+{"content_length": 50446, "content_type": "text/html", "host": "<хуй>", "http_version": "1.1", "input": "https://<хуй>", "port": 443, "probe_name": "phpinfo", "response_headers": {"Connection": "close", "Content-Length": "50446", "Content-Type": "text/html", "Date": "Mon, 15 Jul 2024 04:40:47 GMT", "Server": "Apache", "X-Hostname": "heidegger"}, "status_code": 200, "status_reason": "OK", "url": "https://<хуй>/phpinfo.php"}
 ```
 
 Другие особенности:
 
 * Для каждой ссылки для сканирования используется рандомный `User-Agent`.
 * Поддерживаются прокси, например, `socks5://localhost:1080`.
-* С помощью `--ignore-hosts` можно передать список игнорируемых хостов, причем можно использовать шаблоны со звездочкой типа `*.shopify.com`, чтобы отсеивать поддомены. Домены можно писать в любом регистре.
+* С помощью `--exclude-hosts` можно передать список игнорируемых хостов, причем можно использовать шаблоны со звездочкой типа `*.shopify.com`, чтобы отсеивать поддомены. Домены можно писать в любом регистре.
 * Определенные коды ответов можно пропустить, например, `--exclude-statuses 401 403`.
 
 Для разработки:
