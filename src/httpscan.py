@@ -295,7 +295,7 @@ class ConfigDict(typing.TypedDict):
     probes: typing.NotRequired[list[ProbeDict]]
     ignore_hosts: typing.NotRequired[list[str]]
     proxy_url: typing.NotRequired[str]
-
+    user_agent: typing.NotRequired[str]
     force_https: typing.NotRequired[bool]
     skip_statuses: typing.NotRequired[list[str]]
     save_dir: typing.NotRequired[os.PathLike]
@@ -307,6 +307,7 @@ OUTPUT_DIR = pathlib.Path.cwd() / "output"
 
 @dataclasses.dataclass
 class Settings:
+    _: dataclasses.KW_ONLY
     workers: int = 10
     parallel_probes: int = 50
     max_host_error: int = 10
@@ -316,7 +317,7 @@ class Settings:
     host_delay: int = 120
     proxy_url: str | None = None
     ignore_hosts: typing.Iterable[str] | None = None
-
+    user_agent: str | None = None
     force_https: bool = False
     save_dir: pathlib.Path = OUTPUT_DIR
     skip_statuses: typing.Sequence[int] = dataclasses.field(
@@ -353,7 +354,10 @@ class Scanner:
         )
         lock = asyncio.Lock()
         host_errors = collections.Counter()
-        user_agents = await self.get_user_agents()
+
+        user_agents = []
+        if not self.settings.user_agent:
+            user_agents = await self.get_user_agents()
 
         workers = [
             Worker(
@@ -491,7 +495,12 @@ class Worker:
                     break
 
                 try:
-                    user_agent = self.rand_ua()
+                    user_agent = (
+                        self.settings.user_agent
+                        if self.settings.user_agent
+                        else self.rand_ua()
+                    )
+
                     logger.debug(f"user agent for {url}: {user_agent}")
                     self.next_request = 0
 
@@ -935,6 +944,7 @@ class NameSpace(argparse.Namespace):
     proxy_url: str
     probe_read_length: int
     save_dir: str
+    user_agent: str
     verbosity: int
 
 
@@ -1062,6 +1072,11 @@ def parse_args(
         default="64k",
     )
     parser.add_argument(
+        "-ua",
+        "--user-agent",
+        help="use specified user-agent instead random",
+    )
+    parser.add_argument(
         "-v",
         "--verbosity",
         help="be more verbosity",
@@ -1120,6 +1135,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
         probe_read_length=parse_size(
             conf.get("probe_read_length", args.probe_read_length)
         ),
+        user_agent=conf.get("user_agent", args.user_agent),
     )
 
     scanner = Scanner(
