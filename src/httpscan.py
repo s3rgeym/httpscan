@@ -464,7 +464,9 @@ class Scanner:
                     "Referer": GOOGLE_REFERER,
                     # перебрасывает с http:// на https://
                     # "Upgrade-Insecure-Requests": "1",
-                    "User-Agent": user_agent or DEFAULT_USER_AGENT,
+                    "User-Agent": user_agent
+                    or self.settings.user_agent
+                    or DEFAULT_USER_AGENT,
                     **headers,
                 }
             )
