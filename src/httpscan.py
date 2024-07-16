@@ -303,7 +303,8 @@ class ConfigDict(typing.TypedDict):
     proxy_url: typing.NotRequired[str]
     user_agent: typing.NotRequired[str]
     force_https: typing.NotRequired[bool]
-    exclude_statuses: typing.NotRequired[list[str]]
+    match_statuses: typing.NotRequired[list[int | str]]
+    exclude_statuses: typing.NotRequired[list[int | str]]
     save_dir: typing.NotRequired[os.PathLike]
     probe_read_length: typing.NotRequired[str]
 
@@ -984,13 +985,13 @@ def find_config() -> None | typing.TextIO:
                 return path.open()
 
 
-def parse_statuses(args: list[str]) -> list[int]:
+def parse_statuses(args: list[int | str]) -> list[int]:
     rv = []
     for arg in args:
         try:
             first, last = sorted(map(int, arg.split("-", 1)))
             rv.extend(range(first, last + 1))
-        except ValueError:
+        except (ValueError, AttributeError):
             rv.append(int(arg))
     return rv
 
