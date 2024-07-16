@@ -688,7 +688,7 @@ class Worker:
             report = {
                 "input": base_url,
                 "response_headers": dict(response.headers),
-                "probe_name": probe["name"],
+                "probe": probe,
                 **result,
             }
 
@@ -701,7 +701,7 @@ class Worker:
                 )
 
             js = json.dumps(
-                remove_empty_from_dict(report),
+                remove_none_from_dict(report),
                 ensure_ascii=False,
                 sort_keys=True,
             )
@@ -955,8 +955,12 @@ def mask_ip(addr: str, ch: str = "*") -> str:
     return re.sub(r"[^.](?![^.]*$)", ch, addr)
 
 
-def remove_empty_from_dict(d: dict) -> dict:
-    return {k: v for k, v in d.items() if v}
+def remove_none_from_dict(d: typing.Mapping) -> dict:
+    return {
+        k: remove_none_from_dict(v) if isinstance(v, typing.Mapping) else v
+        for k, v in d.items()
+        if v is not None
+    }
 
 
 async def check_output(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
