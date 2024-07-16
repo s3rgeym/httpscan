@@ -43,9 +43,9 @@ USER_AGENTS_ENDPOINT = "https://useragents.io/random/__data.json?limit=1000"
 TITLE_RE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE)
 
 
-FailType = typing.NewType("FailType", None)
+# FailType = typing.NewType("FailType", None)
 
-FAIL = FailType(0)
+# FAIL = FailType(0)
 
 
 class ANSI:
@@ -635,7 +635,7 @@ class Worker:
                 # ), f"response does not have same domain with requested url: {url}"
                 if (
                     self.settings.match_statuses
-                    and response.status not in self.settings.exclude_statuses
+                    and response.status not in self.settings.match_statuses
                 ):
                     logger.warning(
                         f"skip status: {response.status} {response.url}"
@@ -684,7 +684,7 @@ class Worker:
                     content,
                     probe,
                 )
-            ) is FAIL:
+            ) is None:
                 # logger.warning(f"failed probe {probe['name']!r}: {url}")
                 return
 
@@ -811,7 +811,7 @@ class Worker:
         text: str,
         content: bytes,
         conf: ProbeDict,
-    ) -> dict[str, typing.Any] | FailType:
+    ) -> dict[str, typing.Any] | None:
         getheader = response.headers.get
 
         rv = {
@@ -840,27 +840,27 @@ class Worker:
             # уже распарсенный
             # mime_type, _ = parse_header(response.content_type)
             if not execute(conf["condition"], rv):
-                return FAIL
+                return
 
         if "match" in conf:
             if not re.search(conf["match"], text):
-                return FAIL
+                return
 
         if "not_match" in conf:
             if re.search(conf["not_match"], text):
-                return FAIL
+                return
 
         if "extract" in conf:
             if match := re.search(conf["extract"], text):
                 rv |= {"match": match.group()}
             else:
-                return FAIL
+                return
 
         if "extract_all" in conf:
             if items := re.findall(conf["extract_all"], text):
                 rv |= {"matches": items}
             else:
-                return FAIL
+                return
 
         if conf.get("save_file"):
             save_path = (
@@ -888,7 +888,7 @@ class Worker:
             if stat.st_size == 0:
                 logger.warning(f"empty file: {save_path}")
                 save_path.unlink()
-                return FAIL
+                return
 
             rv |= {
                 "saved_bytes": stat.st_size,
@@ -1142,7 +1142,7 @@ def parse_args(
         "--delay",
         help="host delay before probe request in milliseconds",
         type=int,
-        default=150,
+        default=200,
     )
     parser.add_argument(
         "-xh",
