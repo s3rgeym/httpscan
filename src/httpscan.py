@@ -521,7 +521,7 @@ def strip_html_tags(s: str) -> str:
 def detect_languages(s: str) -> list[str]:
     """languages are sorted by rate"""
     c = collections.Counter()
-    for m in LANGUAGES_RE.finditer(strip_html_tags(s)):
+    for m in LANGUAGES_RE.finditer(s):
         lang, word = next(filter(lambda x: x[1], m.groupdict().items()))
         c[lang] += len(word)
     return [x[0] for x in c.most_common()]
@@ -646,19 +646,19 @@ class Worker:
                     self.settings.probe_read_length
                 )
 
-                text_content: str = content.decode(
+                text: str = content.decode(
                     response.charset or "ascii", errors="replace"
                 )
 
                 # Всегда содержит заголовки `Cache-Control: *no-cache*` и `Transfer-Encoding: chunked`
-                if "<title>One moment, please...</title>" in text_content:
+                if "<title>One moment, please...</title>" in text:
                     logger.debug(f"cloudflare challenge detected: {url}")
 
                     assert (
                         tries > self.settings.bypass_cloudflare_tries
                     ), f"maximum tries to bypass cloudflare exceeded: {self.settings.bypass_cloudflare_tries}"
 
-                    challenge = CloudflareChallenge.from_text(text_content)
+                    challenge = CloudflareChallenge.from_text(text)
 
                     # разгадываем скобки и возвращаем запрашиваемую страницу
                     response = await self.bypass_cloudflare_challenge(
@@ -674,7 +674,7 @@ class Worker:
             if (
                 result := await self.get_probe_result(
                     response,
-                    text_content,
+                    text,
                     content,
                     probe,
                 )
@@ -692,8 +692,12 @@ class Worker:
             }
 
             # на этот символ python заменяет неверные последовательности
-            if "�" not in text_content:
-                report["content_languages"] = detect_languages(text_content)
+            if "�" not in text:
+                report["content_languages"] = detect_languages(
+                    strip_html_tags(text)
+                    if response.content_type == "text/html"
+                    else text
+                )
 
             js = json.dumps(
                 remove_empty_from_dict(report),
@@ -798,7 +802,7 @@ class Worker:
     async def get_probe_result(
         self,
         response: aiohttp.ClientResponse,
-        text_content: str,
+        text: str,
         content: bytes,
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | FailType:
@@ -814,7 +818,7 @@ class Worker:
             "content_charset": response.charset,
         }
 
-        if m := TITLE_RE.search(text_content):
+        if m := TITLE_RE.search(text):
             rv["title"] = m.group(1)
 
         if "condition" in conf:
@@ -824,21 +828,21 @@ class Worker:
                 return FAIL
 
         if "match" in conf:
-            if not re.search(conf["match"], text_content):
+            if not re.search(conf["match"], text):
                 return FAIL
 
         if "not_match" in conf:
-            if re.search(conf["not_match"], text_content):
+            if re.search(conf["not_match"], text):
                 return FAIL
 
         if "extract" in conf:
-            if match := re.search(conf["extract"], text_content):
+            if match := re.search(conf["extract"], text):
                 rv |= {"match": match.group()}
             else:
                 return FAIL
 
         if "extract_all" in conf:
-            if items := re.findall(conf["extract_all"], text_content):
+            if items := re.findall(conf["extract_all"], text):
                 rv |= {"matches": items}
             else:
                 return FAIL
