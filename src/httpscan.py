@@ -698,12 +698,12 @@ class Worker:
             }
 
             # на этот символ python заменяет неверные последовательности
-            if "�" not in text:
-                report["content_languages"] = detect_languages(
-                    strip_html_tags(text)
-                    if response.content_type == "text/html"
-                    else text
-                )
+            # if "�" not in text:
+            report["content_languages"] = detect_languages(
+                strip_html_tags(text)
+                if response.content_type == "text/html"
+                else text
+            )
 
             js = json.dumps(
                 remove_none_from_dict(report),
