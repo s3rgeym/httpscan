@@ -485,6 +485,48 @@ class Scanner:
             yield session
 
 
+LANGUAGES_RE = re.compile(
+    "|".join(
+        f"(?P<{k}>{v})"
+        for k, v in {
+            # https://stackoverflow.com/questions/1922097/regular-expression-for-french-characters
+            "fr": r"[a-z]*(?:[àâçéèêëîïôûùüÿñæœ]+[a-z]*)+",
+            "es": r"[a-z]*(?:[ñáéíóú]+[a-z]*)+",
+            # https://stackoverflow.com/questions/23491793/how-to-using-regex-to-check-if-a-string-contains-german-characters-in-javascript
+            "de": r"[a-z]*(?:[ßüöä][a-z]*)+",
+            # английский содержит много общих символов с языками выше
+            "en": r"[a-z]+",
+            # > re.findall(r'[ЁёА-я]+', 'Воркута - город на севере России')
+            # ['Воркута', 'город', 'на', 'севере', 'России']
+            "ru": r"[ёа-я]+",
+            # https://stackoverflow.com/questions/6787716/regular-expression-for-japanese-characters
+            "jp": r"[一-龠ぁ-ゔァ-ヴーａ-ｚＡ-Ｚ０-９々〆〤]+",
+            # https://stackoverflow.com/a/71633418/2240578
+            "kr": r"[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7AF\uD7B0-\uD7FF]+",
+            "cn": r"[\u4E00-\u9FFF]+",
+        }.items()
+    ),
+    re.IGNORECASE,
+)
+
+
+def strip_html_tags(s: str) -> str:
+    # > strip_html_tags('<p>Sample text<script>alert("XSS!")</script>')
+    # 'Sample text'
+    return re.sub(
+        "<.*?>", "", re.sub(r"<script.*?</script>", "", s, re.IGNORECASE)
+    )
+
+
+def detect_languages(s: str) -> list[str]:
+    """languages are sorted by rate"""
+    c = collections.Counter()
+    for m in LANGUAGES_RE.finditer(strip_html_tags(s)):
+        lang, word = next(filter(lambda x: x[1], m.groupdict().items()))
+        c[lang] += len(word)
+    return [x[0] for x in c.most_common()]
+
+
 @dataclasses.dataclass
 class Worker:
     scanner: Scanner
@@ -648,6 +690,10 @@ class Worker:
                 "probe_name": probe["name"],
                 **result,
             }
+
+            # на этот символ python заменяет неверные последовательности
+            if "�" not in text_content:
+                report["content_languages"] = detect_languages(text_content)
 
             js = json.dumps(
                 remove_empty_from_dict(report),
