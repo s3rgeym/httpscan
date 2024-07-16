@@ -680,7 +680,7 @@ class Worker:
                     probe,
                 )
             ) is FAIL:
-                logger.warning(f"failed probe {probe['name']!r}: {url}")
+                # logger.warning(f"failed probe {probe['name']!r}: {url}")
                 return
 
             logger.info(f"successed probe {probe['name']!r}: {url}")
@@ -1191,7 +1191,7 @@ def main(argv: typing.Sequence[str] | None = None) -> None | int:
     _, args = parse_args(argv=argv)
 
     logger.setLevel(
-        max(logging.DEBUG, logging.WARNING - logging.DEBUG * args.verbosity)
+        max(logging.DEBUG, logging.ERROR - logging.DEBUG * args.verbosity)
     )
 
     logger.addHandler(ColorHandler())
