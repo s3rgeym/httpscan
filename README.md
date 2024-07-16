@@ -65,7 +65,7 @@ probes:
 Результаты сканирования выводятся в формате **JSONL** (JSON Lines, где каждый объект с новой строки). Для работы с ними используйте `jq`.
 
 ```json
-{"content_length": 50446, "content_type": "text/html", "host": "<хуй>", "http_version": "1.1", "input": "https://<хуй>", "port": 443, "probe_name": "phpinfo", "response_headers": {"Connection": "close", "Content-Length": "50446", "Content-Type": "text/html", "Date": "Mon, 15 Jul 2024 04:40:47 GMT", "Server": "Apache", "X-Hostname": "heidegger"}, "status_code": 200, "status_reason": "OK", "url": "https://<хуй>/phpinfo.php"}
+{"content_languages": ["en"], "content_length": 303, "content_type": "application/octet-stream", "host": "domain.tld", "http_version": "1.1", "input": "https://domain.tld", "port": 443, "probe": {"name": "docker config file", "not_match": "^\\s*<[a-zA-Z]+", "path": "/{{prod,dev,}.env,Dockerfile{,.prod,.dev},docker-compose{,.prod,.dev}.yml}", "save_file": true}, "response_headers": {"Accept-Ranges": "bytes", "Cache-Control": "no-cache, no-store, must-revalidate", "Content-Length": "303", "Date": "Tue, 16 Jul 2024 17:38:08 GMT", "Etag": "\"12f-60425670233e7\"", "Expires": "0", "Last-Modified": "Wed, 30 Aug 2023 15:15:48 GMT", "Pragma": "no-cache", "Server": "Apache", "Strict-Transport-Security": "max-age=31536000; includeSubDomains", "Vary": "User-Agent", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "sameorigin", "X-XSS-Protection": "1;  mode=block"}, "response_url": "https://domain.tld/.env", "saved_as": "/tmp/x/domain.tld/.env", "saved_bytes": 303, "server": "Apache", "status_code": 200, "status_reason": "OK"}
 ```
 
 Другие особенности:
