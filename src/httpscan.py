@@ -8,6 +8,7 @@ import collections
 import contextlib
 import copy
 import dataclasses
+import datetime
 import itertools
 import json
 import logging
@@ -24,7 +25,6 @@ from functools import cached_property
 import aiohttp
 import aiohttp.abc
 import yaml
-from aiodns import DNSResolver
 from aiohttp_socks import ProxyConnector
 
 __version__ = "0.3.3"
@@ -694,6 +694,7 @@ class Worker:
                 "input": base_url,
                 "response_headers": dict(response.headers),
                 "probe": probe,
+                "last_visit": datetime.datetime.noe().strftime("%F %T"),
                 **result,
             }
 
@@ -1078,7 +1079,7 @@ def parse_args(
         "-o",
         "--output",
         help="output file to results in JSONL",
-        type=argparse.FileType("w"),
+        type=argparse.FileType("a"),
         default="-",
     )
     parser.add_argument(
