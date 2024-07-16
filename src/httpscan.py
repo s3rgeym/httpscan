@@ -528,6 +528,11 @@ def detect_languages(s: str) -> list[str]:
     return [x[0] for x in c.most_common()]
 
 
+META_GENERATOR_RE = re.compile(
+    r'<meta\s+name="generator"\s+content="([^"]+)', re.IGNORECASE
+)
+
+
 @dataclasses.dataclass
 class Worker:
     scanner: Scanner
@@ -807,6 +812,8 @@ class Worker:
         content: bytes,
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | FailType:
+        getheader = response.headers.get
+
         rv = {
             "response_url": str(response.url),
             "host": response.url.host,
@@ -817,10 +824,17 @@ class Worker:
             "content_length": response.content_length,
             "content_type": response.content_type,
             "content_charset": response.charset,
+            # condition не поддерживает массивы, поэтому добавлены эти переменные
+            "server": getheader("server"),
+            "powered_by": getheader("x-powered-by"),
         }
 
         if m := TITLE_RE.search(text):
             rv["title"] = m.group(1)
+
+        # содержит название cms
+        if m := META_GENERATOR_RE.search(text):
+            rv["meta_generator"] = m.group(1)
 
         if "condition" in conf:
             # уже распарсенный
