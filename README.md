@@ -84,3 +84,14 @@ python -m venv .venv
 # установит все зависимости из pyproject.toml
 pip install .
 ```
+
+### TODO
+
+* `set_state: next_state`
+* `on_state: state_name`
+* `run_python: script_name`
+
+```python
+def run(...) -> ...:
+    ...
+```
