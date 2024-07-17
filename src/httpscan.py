@@ -694,7 +694,7 @@ class Worker:
                 "input": base_url,
                 "response_headers": dict(response.headers),
                 "probe": probe,
-                "last_visit": datetime.datetime.noe().strftime("%F %T"),
+                "last_visit": datetime.datetime.now().strftime("%F %T"),
                 **result,
             }
 
