@@ -490,11 +490,11 @@ LANGUAGES_RE = re.compile(
     "|".join(
         f"(?P<{k}>{v})"
         for k, v in {
+            # https://stackoverflow.com/questions/23491793/how-to-using-regex-to-check-if-a-string-contains-german-characters-in-javascript
+            "de": r"[a-z]*(?:[ßüöä][a-z]*)+",
             # https://stackoverflow.com/questions/1922097/regular-expression-for-french-characters
             "fr": r"[a-z]*(?:[àâçéèêëîïôûùüÿñæœ]+[a-z]*)+",
             "es": r"[a-z]*(?:[ñáéíóú]+[a-z]*)+",
-            # https://stackoverflow.com/questions/23491793/how-to-using-regex-to-check-if-a-string-contains-german-characters-in-javascript
-            "de": r"[a-z]*(?:[ßüöä][a-z]*)+",
             # английский содержит много общих символов с языками выше
             "en": r"[a-z]+",
             # > re.findall(r'[ЁёА-я]+', 'Воркута - город на севере России')
@@ -816,9 +816,10 @@ class Worker:
         getheader = response.headers.get
 
         rv = {
-            "response_url": str(response.url),
+            "url": str(response.url),
             "host": response.url.host,
             "port": response.url.port,
+            "path": response.url.path_qs,
             "http_version": f"{response.version.major}.{response.version.minor}",
             "status_code": response.status,
             "status_reason": response.reason,
