@@ -9,6 +9,7 @@ import contextlib
 import copy
 import dataclasses
 import datetime
+import fnmatch
 import itertools
 import json
 import logging
@@ -27,7 +28,7 @@ import aiohttp.abc
 import yaml
 from aiohttp_socks import ProxyConnector
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 __author__ = "Sergey M"
 
 # При запуске отладчика VS Code устанавливает переменную PYDEVD_USE_FRAME_EVAL=NO
@@ -327,10 +328,10 @@ class Settings:
     user_agent: str | None = None
     force_https: bool = False
     save_dir: pathlib.Path = OUTPUT_DIR
-    match_statuses: typing.Sequence[int] = dataclasses.field(
+    match_statuses: typing.Iterable[int] = dataclasses.field(
         default_factory=list
     )
-    exclude_statuses: typing.Sequence[int] = dataclasses.field(
+    exclude_statuses: typing.Iterable[int] = dataclasses.field(
         default_factory=list
     )
     # читаем и проверяем только первые 64kb
@@ -339,10 +340,6 @@ class Settings:
     bypass_cloudflare_tries: int = 1
 
     def __post_init__(self) -> None:
-        # переводим в нижний регистр
-        self.exclude_hosts: set[str] = set(
-            map(str.lower, self.exclude_hosts or [])
-        )
         if self.proxy_url is None:
             self.proxy_url = os.getenv("PROXY_URL")
 
@@ -412,18 +409,10 @@ class Scanner:
             await queue.put(None)
 
     def excluded_host(self, hostname: str) -> bool:
-        hostname_parts = hostname.split(".")
-
-        # www.linux.org.ru => {'*.linux.org.ru', '*.org.ru', '*.ru', 'www.linux.org.ru'}
-        hostname_wildcards = set(
-            [
-                ".".join(["*"] + hostname_parts[i:])
-                for i in range(1, len(hostname_parts))
-            ]
-            + [hostname]
-        )
-
-        return bool(hostname_wildcards & self.settings.exclude_hosts)
+        for x in self.settings.exclude_hosts:
+            if fnmatch.fnmatch(hostname, x):
+                return True
+        return False
 
     async def get_user_agents(self) -> list[str]:
         logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
