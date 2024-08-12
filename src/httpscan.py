@@ -207,7 +207,6 @@ class ExpressionExecutor:
         # операции типа сложения/вычитания не под-ся
         rv = self.primary()
         while self.match("COMPARE"):
-            # try:
             match self.cur_tok.value:
                 case ">":
                     rv = rv > self.primary()
@@ -223,12 +222,13 @@ class ExpressionExecutor:
                     rv = rv != self.primary()
                 # соответствие шаблону
                 case "=~":
-                    rv = re.search(self.primary(), rv) is not None
+                    right = self.primary()
+                    rv = re.search(right, rv) is not None
                 case _:
                     raise ValueError(self.cur_tok.value)
-            # # 1 < '2'
-            # except TypeError:
-            #     rv = False
+        # # 1 < '2'
+        # except TypeError:
+        #     rv = False
         return rv
 
     def primary(self) -> typing.Any:
@@ -261,7 +261,11 @@ class ExpressionExecutor:
 
 
 def execute(s: str, vars: dict[str, typing.Any]) -> typing.Any:
-    return ExpressionExecutor(s).execute(vars)
+    try:
+        return ExpressionExecutor(s).execute(vars)
+    except Exception:
+        logger.error(f"invalid expression: {s!r}; {vars =}")
+        raise
 
 
 # def parse_header(h: str) -> tuple[str, dict]:
@@ -702,7 +706,7 @@ class Worker:
             )
             print(js, file=self.output, flush=True)
         except Exception as ex:
-            logger.error(ex)
+            logger.error(ex, exc_info=True and False)
             self.host_errors[netloc] += 1
 
     async def sleep(self) -> None:
@@ -802,7 +806,8 @@ class Worker:
         content: bytes,
         conf: ProbeDict,
     ) -> dict[str, typing.Any] | None:
-        getheader = response.headers.get
+        def getheader(h: str) -> str:
+            return response.headers.get(h, "")
 
         rv = {
             "url": str(response.url),
@@ -818,6 +823,8 @@ class Worker:
             # condition не поддерживает массивы, поэтому добавлены эти переменные
             "server": getheader("server"),
             "powered_by": getheader("x-powered-by"),
+            "title": "",
+            "meta_generator": "",
         }
 
         if m := TITLE_RE.search(text):
@@ -832,7 +839,6 @@ class Worker:
             # mime_type, _ = parse_header(response.content_type)
             if not execute(conf["condition"], rv):
                 return
-
         if "match" in conf:
             if not re.search(conf["match"], text):
                 return
