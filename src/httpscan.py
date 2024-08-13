@@ -36,7 +36,6 @@ DEBUGGER_ON = any(name.startswith("PYDEVD_") for name in os.environ)
 
 HEADER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
 HEADER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 GOOGLE_REFERER = "https://www.google.com/"
 
 USER_AGENTS_ENDPOINT = "https://useragents.io/random/__data.json?limit=1000"
@@ -277,6 +276,26 @@ def execute(s: str, vars: dict[str, typing.Any]) -> typing.Any:
 #     return params[0][0], dict(params[1:])
 
 
+def generate_chrome_useragent() -> str:
+    webkit_version = random.uniform(520.0, 537.36)
+    chrome_version = random.randint(110_000_000_000, 127_000_000_000)
+    platform = random.choice(
+        [
+            "Windows NT 10.0; Win64; x64",
+            "Macintosh; Intel Mac OS X 10_15_7",
+            "X11; Linux x86_64",
+        ]
+    )
+
+    return (
+        f"Mozilla/5.0 ({platform}) AppleWebKit/{webkit_version:.2f} "
+        f"(KHTML, like Gecko) Chrome/{chrome_version // 1_000_000_000}."
+        f"{chrome_version // 1_000_000 % 1000}."
+        f"{chrome_version // 1_000 % 1000}."
+        f"{chrome_version % 1000} Safari/{webkit_version:.2f}"
+    )
+
+
 class ProbeDict(typing.TypedDict):
     name: str
     path: str
@@ -366,13 +385,6 @@ class Scanner:
         lock = asyncio.Lock()
         host_errors = collections.Counter()
 
-        user_agents = []
-        if not self.settings.user_agent:
-            try:
-                user_agents = await self.get_user_agents()
-            except Exception:
-                logger.warning("can't fetch user agents")
-
         workers = [
             Worker(
                 self,
@@ -381,7 +393,6 @@ class Scanner:
                 sem=sem,
                 lock=lock,
                 host_errors=host_errors,
-                user_agents=user_agents,
             ).run()
             for _ in range(self.settings.workers)
         ]
@@ -418,12 +429,12 @@ class Scanner:
                 return True
         return False
 
-    async def get_user_agents(self) -> list[str]:
-        logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
-        async with self.get_session() as session:
-            r = await session.get(USER_AGENTS_ENDPOINT)
-            json_data = await r.json()
-        return json_data["nodes"][1]["data"][2:-1][1::4]
+    # async def get_user_agents(self) -> list[str]:
+    #     logger.debug("get user agents from %s", USER_AGENTS_ENDPOINT)
+    #     async with self.get_session() as session:
+    #         r = await session.get(USER_AGENTS_ENDPOINT)
+    #         json_data = await r.json()
+    #     return json_data["nodes"][1]["data"][2:-1][1::4]
 
     async def check_proxy(self) -> bool:
         client_ip = await self.get_ip(use_proxy=False)
@@ -472,7 +483,7 @@ class Scanner:
                     # "Upgrade-Insecure-Requests": "1",
                     "User-Agent": user_agent
                     or self.settings.user_agent
-                    or DEFAULT_USER_AGENT,
+                    or generate_chrome_useragent(),
                     **headers,
                 }
             )
@@ -534,7 +545,6 @@ class Worker:
     lock: asyncio.Lock
     sem: asyncio.Semaphore
     host_errors: collections.Counter[str, int]
-    user_agents: typing.Sequence[str]
 
     async def run(self) -> None:
         task_name = asyncio.current_task().get_name()
@@ -566,9 +576,7 @@ class Worker:
                     user_agent = (
                         self.settings.user_agent
                         if self.settings.user_agent
-                        else self.rand_ua()
-                        if self.user_agents
-                        else DEFAULT_USER_AGENT
+                        else generate_chrome_useragent()
                     )
 
                     logger.debug(f"user agent for {url}: {user_agent}")
@@ -599,9 +607,6 @@ class Worker:
     @property
     def settings(self) -> Settings:
         return self.scanner.settings
-
-    def rand_ua(self) -> str:
-        return random.choice(self.user_agents)
 
     async def make_probe(
         self,
