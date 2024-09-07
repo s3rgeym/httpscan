@@ -276,9 +276,7 @@ def execute(s: str, vars: dict[str, typing.Any]) -> typing.Any:
 #     return params[0][0], dict(params[1:])
 
 
-def generate_chrome_useragent() -> str:
-    webkit_version = random.uniform(520.0, 537.36)
-    chrome_version = random.randint(110_000_000_000, 127_000_000_000)
+def random_chrome_useragent() -> str:
     platform = random.choice(
         [
             "Windows NT 10.0; Win64; x64",
@@ -288,11 +286,8 @@ def generate_chrome_useragent() -> str:
     )
 
     return (
-        f"Mozilla/5.0 ({platform}) AppleWebKit/{webkit_version:.2f} "
-        f"(KHTML, like Gecko) Chrome/{chrome_version // 1_000_000_000}."
-        f"{chrome_version // 1_000_000 % 1000}."
-        f"{chrome_version // 1_000 % 1000}."
-        f"{chrome_version % 1000} Safari/{webkit_version:.2f}"
+        f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{random.randint(112, 127)}.0.0.0 Safari/537.36"
     )
 
 
@@ -576,7 +571,7 @@ class Worker:
                     user_agent = (
                         self.settings.user_agent
                         if self.settings.user_agent
-                        else generate_chrome_useragent()
+                        else random_chrome_useragent()
                     )
 
                     logger.debug(f"user agent for {url}: {user_agent}")
